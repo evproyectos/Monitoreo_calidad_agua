@@ -1,0 +1,321 @@
+"""
+Motor de monitoreo en vivo.
+
+  1. recibir(fecha, valores): guarda cada lectura de 15 min (todos los sensores) en memoria.
+  2. procesar(): toma TODAS las horas ya cerradas que falten por procesar (una hora se cierra
+     cuando llega una lectura de la hora siguiente) y, de una sola vez:
+       - limpia las lecturas con las reglas de operación (calidad.lecturas_operativas);
+       - arma las variables con las mismas funciones del entrenamiento, sobre las últimas
+         `historia_h` horas;
+       - pronostica cloro, turbidez y pH a 24 h para cada sensor;
+       - calcula la probabilidad de evento de cada sensor y actualiza las alarmas.
+     Procesar varias horas juntas cuesta casi lo mismo que una, así que el motor no se queda
+     atrás aunque los datos lleguen acelerados.
+
+Alarmas (igual que en la evaluación del notebook 07):
+  - un sensor está en alarma si su probabilidad de evento supera el umbral durante
+    `confirmar_h` horas seguidas;
+  - la alarma de RED se abre cuando algún sensor entra en alarma y se cierra cuando pasan
+    `horas_para_cerrar` horas seguidas sin ningún sensor en alarma.
+"""
+
+import csv
+import os
+import time
+from collections import Counter
+
+import numpy as np
+import pandas as pd
+
+from calidad_agua import calidad, carga, variables, detector
+from calidad_agua.red_neuronal import SALIDAS
+
+from monitoreo.config import Config
+from monitoreo.modelos import Modelos
+
+
+class Registro:
+    """CSV que se escribe a medida que ocurren las cosas."""
+
+    def __init__(self, ruta, columnas):
+        self.f = open(ruta, "w", newline="", encoding="utf-8")
+        self.w = csv.DictWriter(self.f, fieldnames=columnas, extrasaction="ignore")
+        self.w.writeheader()
+
+    def escribir(self, filas):
+        self.w.writerows(filas)
+        self.f.flush()
+
+
+class Motor:
+    def __init__(self, config=None, modelos=None, registrar=True):
+        self.cfg = config or Config()
+        self.modelos = modelos or Modelos(self.cfg.carpeta_modelos, self.cfg.modo_pronostico)
+        self.sensores = self.modelos.sensores
+        self._nuevas = []                         # lecturas recibidas aún no pasadas al búfer
+        self.bufer = pd.DataFrame()
+        self.columnas = None
+        self.ultima_lectura = None
+        self.primera_lectura = None
+        self.ultima_hora_procesada = None
+        self.lecturas_recibidas = 0
+        self.inicio_reloj = time.time()
+
+        # estado de las alarmas
+        self.horas_alto = {n: 0 for n in self.sensores}
+        self.alarma_abierta = None
+        self.horas_sin_alarma = 0
+        self.alarmas = []
+        self._siguiente_id = 1
+
+        # resultados acumulados (para la API y la verificación)
+        self.pronosticos = []                     # DataFrames por lote
+        self.deteccion = []
+        self.ultimo_estado_sensores = {}
+
+        self.carpeta_sesion = None
+        if registrar:
+            self.carpeta_sesion = os.path.join(self.cfg.carpeta_registros,
+                                               "sesion_" + time.strftime("%Y%m%d_%H%M%S"))
+            os.makedirs(self.carpeta_sesion, exist_ok=True)
+            self.reg_pron = Registro(os.path.join(self.carpeta_sesion, "pronosticos.csv"),
+                                     ["fecha", "nodo", "fecha_pronosticada"] + SALIDAS + [f"base_{p}" for p in SALIDAS])
+            self.reg_det = Registro(os.path.join(self.carpeta_sesion, "deteccion.csv"),
+                                    ["fecha", "nodo", "p_evento", "tipo", "en_alarma"])
+            self.reg_alarmas = Registro(os.path.join(self.carpeta_sesion, "alarmas.csv"),
+                                        ["id", "inicio", "fin", "horas", "sensores", "tipo_sugerido"])
+
+    # ------------------------------------------------------------------ entrada
+    def recibir(self, fecha, valores):
+        fecha = pd.Timestamp(fecha)
+        if self.ultima_lectura is not None and fecha <= self.ultima_lectura:
+            return                                # repetida o fuera de orden: se ignora
+        fila = {k: (np.nan if v is None else float(v)) for k, v in valores.items()}
+        fila["fecha"] = fecha
+        self._nuevas.append(fila)
+        if self.primera_lectura is None:
+            self.primera_lectura = fecha
+        self.ultima_lectura = fecha
+        self.lecturas_recibidas += 1
+
+    def _pasar_al_bufer(self):
+        if not self._nuevas:
+            return
+        nuevas = pd.DataFrame(self._nuevas).set_index("fecha")
+        self._nuevas = []
+        self.bufer = nuevas if self.bufer.empty else pd.concat([self.bufer, nuevas])
+        if self.columnas is None:
+            self.columnas = list(self.bufer.columns)
+
+    def horas_pendientes(self):
+        """Horas completas que todavía no se procesaron (la hora en curso no cuenta)."""
+        if self.ultima_lectura is None:
+            return pd.DatetimeIndex([])
+        ultima_cerrada = self.ultima_lectura.floor("h") - pd.Timedelta(hours=1)
+        if self.ultima_hora_procesada is not None:
+            primera = self.ultima_hora_procesada + pd.Timedelta(hours=1)
+        else:
+            primera = self.primera_lectura.ceil("h")
+        if primera > ultima_cerrada:
+            return pd.DatetimeIndex([])
+        return pd.date_range(primera, ultima_cerrada, freq="1h")
+
+    # ------------------------------------------------------------------ proceso
+    def procesar(self):
+        """Procesa todas las horas cerradas pendientes. Devuelve la lista de novedades."""
+        self._pasar_al_bufer()
+        horas = self.horas_pendientes()
+        if len(horas) == 0:
+            return []
+        desde = horas[0] - pd.Timedelta(hours=self.cfg.historia_h) + pd.Timedelta(minutes=15)
+        hasta = horas[-1] + pd.Timedelta(minutes=45)
+        ventana = self.bufer.loc[desde:hasta]
+        w15 = calidad.lecturas_operativas(ventana)
+
+        pron = self.modelos.pronosticar(variables.horario(w15), horas)
+        det = self.modelos.detectar(detector.horario(w15), horas)
+        # al arrancar, hasta tener `historia_h` horas de datos las variables están incompletas:
+        # se calcula todo pero no se encienden alarmas (y los pronósticos se marcan)
+        listas = horas[(horas - self.primera_lectura) >= pd.Timedelta(hours=self.cfg.historia_h)]
+        pron["calentando"] = ~pron["fecha"].isin(listas)
+
+        novedades = []
+        det["en_alarma"] = False
+        for hora in horas:
+            filas = det["fecha"] == hora
+            sub = det[filas].set_index("nodo")
+            en_alarma = []
+            if hora not in listas:
+                continue
+            for n in self.sensores:
+                p = sub["p_evento"].get(n, np.nan)
+                self.horas_alto[n] = self.horas_alto[n] + 1 if (p == p and p >= self.modelos.umbral) else 0
+                if self.horas_alto[n] >= self.modelos.confirmar_h:
+                    en_alarma.append(n)
+            det.loc[filas & det["nodo"].isin(en_alarma), "en_alarma"] = True
+            tipos = sub.loc[en_alarma, "tipo"].tolist() if en_alarma else []
+            novedades += self._actualizar_alarma(hora, en_alarma, tipos)
+            self.ultimo_estado_sensores = {
+                n: {"p_evento": float(sub["p_evento"].get(n, np.nan)), "tipo": carga.TIPOS_EVENTO.get(int(sub["tipo"].get(n, 0)), "?"),
+                    "en_alarma": n in en_alarma} for n in self.sensores}
+
+        self.pronosticos.append(pron)
+        self.deteccion.append(det)
+        self._actualizar_reciente(pron, det)
+        if self.carpeta_sesion:
+            self.reg_pron.escribir(pron.to_dict("records"))
+            self.reg_det.escribir(det.assign(tipo=det["tipo"].map(carga.TIPOS_EVENTO)).to_dict("records"))
+        self.ultima_hora_procesada = horas[-1]
+
+        # el búfer solo necesita la historia de las variables
+        limite = self.ultima_hora_procesada - pd.Timedelta(hours=self.cfg.historia_h + 2)
+        self.bufer = self.bufer.loc[self.bufer.index > limite]
+        return novedades
+
+    def _actualizar_alarma(self, hora, en_alarma, tipos):
+        a = self.alarma_abierta
+        if en_alarma:
+            self.horas_sin_alarma = 0
+            if a is None:
+                a = self.alarma_abierta = {"id": self._siguiente_id, "inicio": hora, "fin": hora,
+                                           "sensores": set(), "tipos": Counter()}
+                self._siguiente_id += 1
+                nueva = [{"evento": "alarma_abierta", "id": a["id"], "hora": str(hora), "sensores": sorted(en_alarma)}]
+            else:
+                nueva = []
+            a["fin"] = hora
+            a["sensores"].update(en_alarma)
+            a["tipos"].update(tipos)
+            return nueva
+        if a is not None:
+            self.horas_sin_alarma += 1
+            if self.horas_sin_alarma >= self.cfg.horas_para_cerrar:
+                cerrada = self._alarma_json(a)
+                self.alarmas.append(cerrada)
+                self.alarma_abierta = None
+                if self.carpeta_sesion:
+                    self.reg_alarmas.escribir([cerrada])
+                return [{"evento": "alarma_cerrada", "id": cerrada["id"], "hora": str(hora)}]
+        return []
+
+    @staticmethod
+    def _alarma_json(a, abierta=False):
+        tipo = carga.TIPOS_EVENTO.get(a["tipos"].most_common(1)[0][0], "?") if a["tipos"] else "?"
+        return {"id": a["id"], "inicio": str(a["inicio"]), "fin": None if abierta else str(a["fin"]),
+                "horas": int((a["fin"] - a["inicio"]).total_seconds() // 3600) + 1,
+                "sensores": ", ".join(sorted(a["sensores"])), "tipo_sugerido": tipo}
+
+    # ------------------------------------------------------------------ consultas (dashboard)
+    DIAS_RECIENTES = 8
+
+    def _actualizar_reciente(self, pron, det):
+        """Últimos días de pronósticos y detección, para responder rápido a la API."""
+        corte = det["fecha"].max() - pd.Timedelta(days=self.DIAS_RECIENTES)
+        self.reciente_pron = pd.concat([getattr(self, "reciente_pron", pd.DataFrame()), pron], ignore_index=True)
+        self.reciente_det = pd.concat([getattr(self, "reciente_det", pd.DataFrame()), det], ignore_index=True)
+        self.reciente_pron = self.reciente_pron[self.reciente_pron["fecha"] > corte]
+        self.reciente_det = self.reciente_det[self.reciente_det["fecha"] > corte]
+
+    def resumen_sensores(self):
+        """Estado actual de cada sensor: última hora observada, pronóstico a 24 h y detector."""
+        if not hasattr(self, "reciente_pron") or self.reciente_pron.empty:
+            return []
+        hora = self.reciente_pron["fecha"].max()
+        p = self.reciente_pron[self.reciente_pron["fecha"] == hora].set_index("nodo")
+        d = self.reciente_det[self.reciente_det["fecha"] == hora].set_index("nodo")
+        tip = self.modelos.tipicos
+        filas = []
+        for n in self.sensores:
+            fila = {"nodo": n, "hora": str(hora), "cloro_tipico": round(float(tip[("CL2", n)]), 3)}
+            for par in SALIDAS:
+                fila[par] = _num(p[f"base_{par}"].get(n))
+                fila[f"pronostico_{par}"] = _num(p[par].get(n))
+            fila["p_evento"] = _num(d["p_evento"].get(n))
+            fila["tipo_sugerido"] = carga.TIPOS_EVENTO.get(int(d["tipo"].get(n, 0)), "?")
+            fila["en_alarma"] = bool(d["en_alarma"].get(n, False))
+            filas.append(fila)
+        return filas
+
+    def serie_sensor(self, nodo, horas=72):
+        """
+        Serie horaria de un sensor para graficar: lo observado en las últimas `horas`, el pronóstico
+        que se había hecho 24 h antes para cada una de esas horas, el pronóstico de las próximas 24 h
+        y la probabilidad de evento.
+        """
+        if not hasattr(self, "reciente_pron") or self.reciente_pron.empty:
+            return {"ahora": None, "puntos": []}
+        p = self.reciente_pron[self.reciente_pron["nodo"] == nodo]
+        d = self.reciente_det[self.reciente_det["nodo"] == nodo].set_index("fecha")
+        ahora = p["fecha"].max()
+        desde = ahora - pd.Timedelta(hours=horas - 1)
+        obs = p.set_index("fecha")
+        pron = p.set_index("fecha_pronosticada")
+        puntos = []
+        for f in pd.date_range(desde, ahora + pd.Timedelta(hours=24), freq="1h"):
+            pt = {"fecha": str(f)}
+            for par in SALIDAS:
+                pt[par] = _num(obs[f"base_{par}"].get(f)) if f <= ahora else None
+                pt[f"pronostico_{par}"] = _num(pron[par].get(f))
+            pt["p_evento"] = _num(d["p_evento"].get(f)) if f <= ahora else None
+            pt["en_alarma"] = bool(d["en_alarma"].get(f, False)) if f <= ahora else None
+            puntos.append(pt)
+        return {"ahora": str(ahora), "puntos": puntos}
+
+    def series_red(self, horas=48):
+        """
+        Series de los 21 sensores a la vez (para la vista general): observado de las últimas
+        `horas` y pronóstico de las próximas 24 h, por parámetro.
+        """
+        if not hasattr(self, "reciente_pron") or self.reciente_pron.empty:
+            return {"ahora": None, "fechas": [], "sensores": {}}
+        p = self.reciente_pron
+        ahora = p["fecha"].max()
+        fechas = pd.date_range(ahora - pd.Timedelta(hours=horas - 1), ahora + pd.Timedelta(hours=24), freq="1h")
+        pasado = fechas <= ahora
+        sensores = {n: {} for n in self.sensores}
+        for par in SALIDAS:
+            obs = p.pivot(index="fecha", columns="nodo", values=f"base_{par}").reindex(fechas)
+            pron = p.pivot(index="fecha_pronosticada", columns="nodo", values=par).reindex(fechas)
+            for n in self.sensores:
+                o = obs[n].where(pasado) if n in obs else pd.Series(np.nan, index=fechas)
+                f = pron[n] if n in pron else pd.Series(np.nan, index=fechas)
+                sensores[n][par] = [_num(x, 3) for x in o.values]
+                sensores[n][f"pronostico_{par}"] = [_num(x, 3) for x in f.values]
+        return {"ahora": str(ahora), "fechas": [str(f) for f in fechas], "sensores": sensores}
+
+    def lista_alarmas(self):
+        abiertas = [self._alarma_json(self.alarma_abierta, abierta=True)] if self.alarma_abierta else []
+        return self.alarmas + abiertas
+
+    def tabla_pronosticos(self):
+        return pd.concat(self.pronosticos, ignore_index=True) if self.pronosticos else pd.DataFrame()
+
+    def tabla_deteccion(self):
+        return pd.concat(self.deteccion, ignore_index=True) if self.deteccion else pd.DataFrame()
+
+    def matriz_alarmas(self):
+        """Hora × sensor con True donde el sensor estaba en alarma."""
+        d = self.tabla_deteccion()
+        if d.empty:
+            return pd.DataFrame()
+        return d.pivot(index="fecha", columns="nodo", values="en_alarma").astype(bool)
+
+    def estado(self):
+        seg = time.time() - self.inicio_reloj
+        return {"hora_simulada": str(self.ultima_lectura) if self.ultima_lectura is not None else None,
+                "ultima_hora_procesada": str(self.ultima_hora_procesada) if self.ultima_hora_procesada is not None else None,
+                "lecturas_recibidas": self.lecturas_recibidas,
+                "lecturas_por_segundo": round(self.lecturas_recibidas / max(seg, 1e-9), 1),
+                "alarma_activa": self.alarma_abierta is not None,
+                "alarmas_totales": len(self.alarmas) + (1 if self.alarma_abierta else 0),
+                "modo_pronostico": self.modelos.modo, "umbral": self.modelos.umbral,
+                "confirmar_h": self.modelos.confirmar_h}
+
+
+def _num(x, dec=4):
+    """Número para JSON (None si falta)."""
+    try:
+        x = float(x)
+    except (TypeError, ValueError):
+        return None
+    return None if x != x else round(x, dec)

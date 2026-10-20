@@ -1,0 +1,5 @@
+fastapi
+uvicorn[standard]
+requests
+# Además, el paquete del proyecto de modelos (mismo código que los notebooks):
+#   pip install -e "..\..\Modelo_calidad_agua[red]"

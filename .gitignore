@@ -1,0 +1,17 @@
+# Python
+venv/
+.venv/
+__pycache__/
+*.pyc
+*.egg-info/
+
+# React (paso 3)
+node_modules/
+frontend/dist/
+
+# registros de cada sesión del motor
+registros/
+
+# secretos (claves de WhatsApp, teléfonos)
+.env
+secretos/
