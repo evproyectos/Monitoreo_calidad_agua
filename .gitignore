@@ -15,3 +15,8 @@ registros/
 # secretos (claves de WhatsApp, teléfonos)
 .env
 secretos/
+
+# scripts locales para arrancar y detener todo (no se versionan)
+iniciar.ps1
+detener.ps1
+.procesos
