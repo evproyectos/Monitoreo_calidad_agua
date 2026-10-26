@@ -5,6 +5,8 @@ Configuración del servicio. Cada valor se puede cambiar con una variable de ent
   CARPETA_MODELOS    modelos entrenados                     (por defecto: modelos/ del proyecto de modelos)
   MODO_PRONOSTICO    "combinado" (árboles + LSTM) o "arboles" (sin TensorFlow)
   CARPETA_REGISTROS  CSV de cada sesión                     (por defecto registros/ de este proyecto)
+  FUENTE_PRONOSTICO  pronóstico de lluvia: "archivo" (pronósticos pasados, para los datos del
+                     emisor) u "open-meteo" (pronóstico vigente, para datos en tiempo real)
 """
 
 import os

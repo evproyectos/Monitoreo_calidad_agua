@@ -20,6 +20,7 @@ backend/
   monitoreo/
     config.py          configuración (URL de la API de datos, modelos, modo de pronóstico)
     modelos.py         carga los modelos entrenados y los aplica
+    pronostico_lluvia.py  pronóstico de lluvia que necesitan los modelos (archivo u Open-Meteo)
     motor.py           recibe lecturas, procesa cada hora cerrada, maneja las alarmas
     cliente_datos.py   consulta la API de datos
     servicio.py        API del servicio (FastAPI, puerto 8001) que además sirve el dashboard
@@ -50,7 +51,18 @@ pip install -e "..\..\Modelo_calidad_agua[red]"
 
 Los modelos se leen de `Modelo_calidad_agua/modelos/`, que se genera corriendo los
 notebooks 07 y 08 de ese proyecto. Para usar otra carpeta: variable de entorno
-`CARPETA_MODELOS`.
+`CARPETA_MODELOS`. Si los modelos son de una versión anterior (sin pronóstico de lluvia), el
+servicio no arranca y pide volver a correr esos notebooks.
+
+**Pronóstico de lluvia.** Los modelos de pronóstico usan la lluvia pronosticada para las
+próximas 24 h (promedio de los modelos meteorológicos ECMWF, GFS, ICON y GEM). La fuente se elige
+con la variable de entorno `FUENTE_PRONOSTICO`:
+
+- `archivo` (por defecto): los pronósticos pasados guardados en
+  `Modelo_calidad_agua/clima/pronostico_lluvia_modelos.csv`. Es lo que corresponde con los datos
+  del emisor, que son de fechas pasadas: el servicio ve el pronóstico que existía en ese momento.
+- `open-meteo`: el pronóstico vigente de la API de Open-Meteo, para datos en tiempo real. Se
+  consulta cada hora; si no hay conexión, se sigue con el último que se obtuvo.
 
 ## Uso
 

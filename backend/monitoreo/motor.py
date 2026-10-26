@@ -309,6 +309,8 @@ class Motor:
                 "alarma_activa": self.alarma_abierta is not None,
                 "alarmas_totales": len(self.alarmas) + (1 if self.alarma_abierta else 0),
                 "modo_pronostico": self.modelos.modo, "umbral": self.modelos.umbral,
+                "pronostico_lluvia": self.modelos.pronostico.descripcion,
+                "error_pronostico_lluvia": getattr(self.modelos.pronostico, "error", None),
                 "confirmar_h": self.modelos.confirmar_h}
 
 
