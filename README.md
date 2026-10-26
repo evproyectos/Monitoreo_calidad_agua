@@ -29,7 +29,8 @@ backend/
 frontend/              dashboard en React (Vite + Recharts)
   src/
     App.jsx            página y navegación entre las dos vistas (#/general y #/sensor/J224)
-    componentes/       Encabezado, VistaGeneral, RedSensores, DetalleSensor, Graficos, Alarmas
+    componentes/       Encabezado, VistaGeneral, GraficoRed, MapaCalor, RedSensores,
+                       DetalleSensor, Graficos, Alarmas
     api.js             consultas periódicas al backend
     formato.js         etiquetas, norma, tolerancias, formato de números y fechas
     estilos.css        colores (modo claro y oscuro), tipografía y diseño
@@ -81,9 +82,13 @@ y abrir **http://127.0.0.1:8001**. Con `--modo arboles` el servicio corre sin Te
 
 El dashboard tiene dos vistas:
 
-- **Vista general** (`#/general`): los 21 sensores a la vez, de la fuente al extremo de la
-  red, cada uno con su estado, sus valores actuales y una mini-gráfica de las últimas 48 h y
-  el pronóstico de las próximas 24 h (cloro, turbidez o pH, todas en la misma escala).
+- **Vista general** (`#/general`): la red completa para cloro, turbidez o pH.
+  - Gráfico de la red: mediana de los 21 sensores, la banda donde está la mayoría (del 10 %
+    al 90 %) y el sensor más extremo, en las últimas 72 h y el pronóstico de las próximas
+    24 h. Una falla general mueve toda la banda; un problema local separa al sensor extremo.
+  - Mapa de calor sensor × hora, de la fuente al extremo de la red: muestra cómo un evento
+    se propaga por la red. Los valores fuera de norma van en rojo; al tocar un sensor se
+    abre su detalle.
 - **Por sensor** (`#/sensor/J224`): la red como tubería para elegir el sensor y sus gráficos
   en detalle (72 h observadas, pronóstico con margen de acierto, límites de la norma y
   probabilidad de evento).
@@ -100,7 +105,7 @@ http://localhost:5173 (las llamadas a `/api` se redirigen al backend en el puert
 | `GET /api/estado` | hora de los datos, conexión, alarma activa, modo de pronóstico |
 | `GET /api/sensores` | estado actual de los 21 sensores: observado, pronóstico a 24 h, probabilidad de evento |
 | `GET /api/sensores/{nodo}/serie?horas=72` | serie horaria para graficar (observado, pronóstico, probabilidad) |
-| `GET /api/red/series?horas=48` | series de los 21 sensores a la vez (vista general) |
+| `GET /api/red/series?horas=72` | series de los 21 sensores a la vez (vista general) |
 | `GET /api/alarmas` | alarmas de red, la más reciente primero |
 | `GET /api/referencias` | norma, tolerancias de la meta y umbral del detector |
 
