@@ -1,7 +1,7 @@
 """
 Verificación del motor en vivo, sin API.
 
-Reproduce el periodo de prueba (sep–dic 2026) lectura por lectura a través del Motor, como si
+Reproduce el periodo de prueba lectura por lectura a través del Motor, como si
 llegara en vivo (solo las columnas de los sensores, sin etiquetas), y compara con el cálculo por
 lotes de los notebooks sobre la tabla completa:
 
@@ -29,7 +29,6 @@ from monitoreo.config import Config
 from monitoreo.modelos import Modelos
 from monitoreo.motor import Motor
 
-INICIO_PRUEBA = pd.Timestamp("2026-09-01")
 
 
 def referencia_por_lotes(modelos, crudo, horas):
@@ -51,6 +50,7 @@ def main():
     print(f"Modelos: {cfg.carpeta_modelos} · modo {cfg.modo_pronostico}")
     modelos = Modelos(cfg.carpeta_modelos, cfg.modo_pronostico)
     crudo = carga.cargar_todo()
+    INICIO_PRUEBA = carga.periodos()["prueba"][0]          # viene en metadatos.json con los datos
     sensores_cols = [c for c in crudo.columns if not c.startswith(("evento_", "falla_")) and c != "particion"]
     fin = crudo.index[-1] if args.dias is None else INICIO_PRUEBA + pd.Timedelta(days=args.dias) - pd.Timedelta(minutes=15)
     envio = crudo.loc[INICIO_PRUEBA - pd.Timedelta(days=args.precarga_dias): fin, sensores_cols]
