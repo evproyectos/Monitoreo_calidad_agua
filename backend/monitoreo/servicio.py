@@ -28,6 +28,7 @@ from fastapi.staticfiles import StaticFiles
 
 from calidad_agua import calidad, metas
 
+from monitoreo.alertas import Alertas
 from monitoreo.cliente_datos import ClienteDatos
 from monitoreo.config import Config, RAIZ
 from monitoreo.motor import Motor
@@ -42,6 +43,7 @@ class Servicio:
         self.cfg = cfg
         self.motor = Motor(cfg)
         self.cliente = ClienteDatos(cfg.url_datos)
+        self.alertas = Alertas()                         # Telegram si está configurado; si no, consola
         self.candado = threading.Lock()
         self.conectado = False
         self.ultimo_error = None
@@ -58,7 +60,8 @@ class Servicio:
                 with self.candado:
                     for l in lecturas:
                         self.motor.recibir(l["fecha"], l["valores"])
-                    self.motor.procesar()
+                    novedades = self.motor.procesar()
+                    self.alertas.revisar(self.motor, novedades)
                 self.ultimo_ciclo_s = round(time.time() - t0, 2)
             except Exception as e:                       # la API de datos se cayó o no responde
                 self.conectado, self.ultimo_error = False, str(e)[:200]
@@ -81,6 +84,8 @@ def crear_app(cfg=None):
         estado["s"] = Servicio(cfg)
         estado["s"].iniciar()
         print(f"Servicio de monitoreo listo · modo {cfg.modo_pronostico} · datos desde {cfg.url_datos}")
+        print(f"Alertas: {estado['s'].alertas.canal.nombre}" + ("" if estado["s"].alertas.canal.nombre == "telegram"
+              else "  (para Telegram: variables TELEGRAM_TOKEN y TELEGRAM_CHAT_ID)"))
         print("Dashboard: http://127.0.0.1:8001" + ("" if DIST.exists() else
               "  (falta compilar el frontend: cd frontend && npm run build)"))
         yield
@@ -105,7 +110,7 @@ def crear_app(cfg=None):
             en_alarma = sum(1 for x in s.motor.resumen_sensores() if x["en_alarma"])
         return {**e, "conectado_a_datos": s.conectado, "error": s.ultimo_error,
                 "duracion_ultimo_ciclo_s": s.ultimo_ciclo_s, "sensores_en_alarma": en_alarma,
-                "alarma_abierta": abierta, "sensores": len(s.motor.sensores)}
+                "alarma_abierta": abierta, "sensores": len(s.motor.sensores), "alertas": s.alertas.estado()}
 
     @app.get("/api/sensores")
     def ver_sensores():

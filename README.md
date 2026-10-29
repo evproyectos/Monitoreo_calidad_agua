@@ -23,6 +23,7 @@ backend/
     pronostico_lluvia.py  pronóstico de lluvia que necesitan los modelos (archivo u Open-Meteo)
     motor.py           recibe lecturas, procesa cada hora cerrada, maneja las alarmas
     cliente_datos.py   consulta la API de datos
+    alertas.py         avisos por Telegram (alarmas, riesgo en 24 h, resumen diario)
     servicio.py        API del servicio (FastAPI, puerto 8001) que además sirve el dashboard
     ejecutar.py        motor en vivo conectado a la API de datos, solo en consola
     verificar.py       comprueba que el motor en vivo da lo mismo que los notebooks
@@ -110,11 +111,44 @@ http://localhost:5173 (las llamadas a `/api` se redirigen al backend en el puert
 
 **Solo consola**, sin dashboard: `python -m monitoreo.ejecutar` en lugar del servicio.
 
+### Alertas por Telegram
+
+El servicio avisa por Telegram cuando se **abre** una alarma (tipo de evento sugerido, sensores y
+sus valores de cloro, turbidez y pH), cuando se **cierra** (duración y sensores), cuando el
+pronóstico de un sensor sale de la norma en las próximas 24 h (**riesgo**, una vez por
+episodio) y con un **resumen diario**. Sin Telegram configurado, las alertas solo se escriben en
+la consola del servicio.
+
+Configuración, una sola vez:
+
+1. En Telegram, escribirle a **@BotFather** `/newbot` y seguir los pasos: da el *token* del bot.
+2. Abrir el chat con el bot nuevo y mandarle cualquier mensaje.
+3. En PowerShell, guardar el token como variable de entorno del usuario (no va en el código ni
+   en git) y sacar el *chat id*:
+
+   ```
+   setx TELEGRAM_TOKEN "el-token-del-bot"
+   # abrir una terminal nueva para que tome la variable; desde backend/, con el venv activado:
+   python -m monitoreo.alertas --chat-id
+   setx TELEGRAM_CHAT_ID "el-chat-id"
+   # otra terminal nueva:
+   python -m monitoreo.alertas --prueba
+   ```
+
+Al arrancar, el servicio dice en la consola qué canal usa (`Alertas: telegram`) y `/api/estado`
+informa cuántas alertas se enviaron y el último error, si hubo.
+
+Opciones (variables de entorno): `ALERTAS_RIESGO=0` para no avisar del riesgo en 24 h,
+`ALERTAS_RESUMEN_HORA` para la hora del resumen diario (7 por defecto; `-1` para no mandarlo),
+`URL_DASHBOARD` para el enlace de los mensajes y `TELEGRAM_CHAT_ID` con varios chats separados
+por coma para avisar a más de una persona. Las horas son las de los datos: con el emisor en
+tiempo real coinciden con el reloj; con el emisor acelerado llegan muchos mensajes seguidos.
+
 ### API del servicio (puerto 8001)
 
 | Ruta | Qué devuelve |
 |---|---|
-| `GET /api/estado` | hora de los datos, conexión, alarma activa, modo de pronóstico |
+| `GET /api/estado` | hora de los datos, conexión, alarma activa, modo de pronóstico, estado de las alertas |
 | `GET /api/sensores` | estado actual de los 21 sensores: observado, pronóstico a 24 h, probabilidad de evento |
 | `GET /api/sensores/{nodo}/serie?horas=72` | serie horaria para graficar (observado, pronóstico, probabilidad) |
 | `GET /api/red/series?horas=72` | series de los 21 sensores a la vez (vista general) |
