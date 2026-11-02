@@ -41,12 +41,11 @@ TIPOS = {"contaminacion": "Contaminación", "falla_cloro": "Falla de cloración"
 NOMBRE = {"CL2": "cloro", "TURB": "turbidez", "PH": "pH"}
 UNIDAD = {"CL2": " mg/L", "TURB": " UNT", "PH": ""}
 HORAS_FIN_RIESGO = 6            # horas seguidas en norma para dar por terminado un episodio de riesgo
-MESES = ["ene", "feb", "mar", "abr", "may", "jun", "jul", "ago", "sep", "oct", "nov", "dic"]
 
 
 def _fecha(t):
-    t = pd.Timestamp(t)
-    return f"{t.day} {MESES[t.month - 1]}, {t:%H:%M}"
+    """Hora de Costa Rica en DD/MM/YYYY HH:mm:ss (RNF-010)."""
+    return f"{pd.Timestamp(t):%d/%m/%Y %H:%M:%S}"
 
 
 def _num(x, dec=2):

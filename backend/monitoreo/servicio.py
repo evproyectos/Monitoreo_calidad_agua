@@ -5,6 +5,7 @@ Al arrancar carga los modelos y deja corriendo, en segundo plano, el ciclo que c
 datos, pasa las lecturas al motor y procesa cada hora cerrada. Los endpoints solo leen el estado
 del motor.
 
+  GET /health                           si el servicio está en pie, versión y modelos cargados
   GET /api/estado                       hora simulada, conexión, alarma activa, modo de pronóstico
   GET /api/sensores                     estado actual de los 21 sensores (observado, pronóstico, detector)
   GET /api/sensores/{nodo}/serie?horas= serie horaria para graficar (observado, pronóstico, prob. de evento)
@@ -23,11 +24,12 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from calidad_agua import calidad, metas
 
+from monitoreo import __version__
 from monitoreo.alertas import Alertas
 from monitoreo.cliente_datos import ClienteDatos
 from monitoreo.config import Config, RAIZ
@@ -91,7 +93,7 @@ def crear_app(cfg=None):
         yield
         estado["s"].detener()
 
-    app = FastAPI(title="Monitoreo de calidad de agua", lifespan=ciclo_de_vida)
+    app = FastAPI(title="Monitoreo de calidad de agua", version=__version__, lifespan=ciclo_de_vida)
     # en desarrollo el dashboard corre en el servidor de Vite (puerto 5173)
     app.add_middleware(CORSMiddleware, allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
                        allow_methods=["GET"], allow_headers=["*"])
@@ -100,6 +102,34 @@ def crear_app(cfg=None):
         if "s" not in estado:
             raise HTTPException(503, "El servicio todavía está cargando los modelos")
         return estado["s"]
+
+    @app.get("/health")
+    def salud():
+        """
+        200 con estado "ok" si todo funciona, o "degradado" si el servicio está en pie pero no
+        llegan datos o falla el pronóstico de lluvia (sigue con el último). Mientras carga los
+        modelos el puerto todavía no responde. Para Docker y para monitoreo externo.
+        """
+        if "s" not in estado:
+            return JSONResponse(status_code=503, content={
+                "estado": "iniciando", "version": __version__, "detalle": "cargando los modelos"})
+        s = estado["s"]
+        with s.candado:
+            e = s.motor.estado()
+            m = s.motor.modelos
+        problemas = []
+        if not s.conectado:
+            problemas.append("sin conexión con la API de datos" + (f": {s.ultimo_error}" if s.ultimo_error else ""))
+        if e["error_pronostico_lluvia"]:
+            problemas.append(f"pronóstico de lluvia: {e['error_pronostico_lluvia']}")
+        return {"estado": "degradado" if problemas else "ok", "problemas": problemas,
+                "version": __version__,
+                "modelos": {**m.version, "modo": m.modo,
+                            "por_parametro": m.elegido, "umbral_detector": m.umbral},
+                "pronostico_lluvia": e["pronostico_lluvia"],
+                "conectado_a_datos": s.conectado,
+                "ultima_hora_procesada": e["ultima_hora_procesada"],
+                "alertas": s.alertas.canal.nombre}
 
     @app.get("/api/estado")
     def ver_estado():

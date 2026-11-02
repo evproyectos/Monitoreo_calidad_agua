@@ -154,6 +154,7 @@ button { font: inherit; color: inherit; }
   .panel, .red { padding: 14px; }
   .lecturas { gap: 14px; }
   .lectura .num { font-size: 17px; }
+  .grafico-cabeza .nota { flex-basis: 100%; }   /* el subtítulo siempre debajo del título */
 }
 @media (prefers-reduced-motion: reduce) { * { transition: none !important; animation: none !important; } }
 

@@ -64,7 +64,7 @@ export default function App() {
       {lista.length > 0 && ruta.vista === "general" && (
         <div className="cuerpo">
           <VistaGeneral sensores={lista} referencias={referencias.datos} onAbrir={abrirSensor} />
-          <Alarmas alarmas={alarmas.datos} onElegir={abrirSensor} />
+          <Alarmas alarmas={alarmas.datos} confirmarH={referencias.datos?.confirmar_h} onElegir={abrirSensor} />
         </div>
       )}
 
@@ -73,7 +73,7 @@ export default function App() {
           <RedSensores sensores={lista} norma={referencias.datos?.norma} elegido={nodo} onElegir={abrirSensor} />
           <div className="cuerpo">
             <DetalleSensor sensor={sensor} referencias={referencias.datos} />
-            <Alarmas alarmas={alarmas.datos} onElegir={abrirSensor} />
+            <Alarmas alarmas={alarmas.datos} confirmarH={referencias.datos?.confirmar_h} onElegir={abrirSensor} />
           </div>
         </>
       )}

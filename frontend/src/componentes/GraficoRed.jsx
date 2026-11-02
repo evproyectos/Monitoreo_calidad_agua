@@ -2,7 +2,7 @@ import {
   Area, CartesianGrid, ComposedChart, Line, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis,
 } from "recharts";
 import { useColores } from "../colores.js";
-import { etiquetaEje, fechaCorta, fueraDeNorma, numero, PARAMETROS } from "../formato.js";
+import { etiquetaEje, fechaHora, fueraDeNorma, numero, PARAMETROS } from "../formato.js";
 
 // Qué sensor es "el peor" según el parámetro: el cloro preocupa cuando baja, la turbidez
 // cuando sube y el pH en los dos sentidos.
@@ -63,7 +63,7 @@ function Burbuja({ active, payload, label, par }) {
   const u = unidad ? ` ${unidad}` : "";
   return (
     <div className="tooltip">
-      <div className="fecha">{fechaCorta(label)}{d.futuro ? " · pronóstico" : ""}</div>
+      <div className="fecha">{fechaHora(label)}{d.futuro ? " · pronóstico" : ""}</div>
       <div className="fila"><span>Mediana de la red</span><b>{numero(d[`${pre}med`], decimales)}{u}</b></div>
       <div className="fila">
         <span>La mayoría (10 % a 90 %)</span>

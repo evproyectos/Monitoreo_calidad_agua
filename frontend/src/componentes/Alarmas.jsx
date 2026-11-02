@@ -1,21 +1,22 @@
-import { fechaCorta, TIPOS } from "../formato.js";
+import { fechaHora, hora, TIPOS } from "../formato.js";
 
-// "12 sep, 20:00 (1 h)" · "5 sep, 11:00 a 16:00 (6 h)" · "5 sep, 20:00 a 6 sep, 03:00 (8 h)"
+// "12/09/2026 20:00:00 (1 h)" · "05/09/2026 11:00:00 a 16:00:00 (6 h)"
+// · "05/09/2026 20:00:00 a 06/09/2026 03:00:00 (8 h)"
 function periodo(a) {
-  const ini = fechaCorta(a.inicio);
+  const ini = fechaHora(a.inicio);
   if (a.fin == null) return `Desde ${ini} (${a.horas} h)`;
   if (a.horas === 1) return `${ini} (1 h)`;
   const mismoDia = a.inicio.slice(0, 10) === a.fin.slice(0, 10);
-  const fin = mismoDia ? fechaCorta(a.fin).split(", ")[1] : fechaCorta(a.fin);
+  const fin = mismoDia ? hora(a.fin) : fechaHora(a.fin);
   return `${ini} a ${fin} (${a.horas} h)`;
 }
 
-export default function Alarmas({ alarmas, onElegir }) {
+export default function Alarmas({ alarmas, confirmarH, onElegir }) {
   return (
     <section className="panel" aria-label="Alarmas">
       <h2>Alarmas</h2>
       {!alarmas?.length ? (
-        <p className="vacio">Sin alarmas por ahora. Aparecen aquí cuando un sensor supera el umbral del detector durante 3 horas seguidas.</p>
+        <p className="vacio">Sin alarmas por ahora. Aparecen aquí cuando un sensor supera el umbral del detector durante {confirmarH ?? 2} horas seguidas.</p>
       ) : (
         <div className="alarmas">
           {alarmas.map((a) => {

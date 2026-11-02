@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useColores } from "../colores.js";
-import { etiquetaEje, fechaCorta, fueraDeNorma, numero, PARAMETROS } from "../formato.js";
+import { etiquetaEje, fechaHora, fueraDeNorma, numero, PARAMETROS } from "../formato.js";
 import { estadoSensor, TEXTO_ESTADO, COLOR_ESTADO } from "./RedSensores.jsx";
 
 // Escala de un solo tono (azul): claro = poco, oscuro = mucho. En modo oscuro se invierte para
@@ -92,7 +92,7 @@ export default function MapaCalor({ red, par, sensores, norma, onAbrir }) {
         const fut = red.fechas[punta.i] > red.ahora;
         return (
           <div className="tooltip mapa-punta" style={{ left: Math.min(punta.x + 14, punta.ancho - 200), top: punta.y + 14 }}>
-            <div className="fecha">{punta.nodo} · {fechaCorta(red.fechas[punta.i])}</div>
+            <div className="fecha">{punta.nodo} · {fechaHora(red.fechas[punta.i])}</div>
             <div className="fila">
               <span>{fut ? "Pronóstico" : "Observado"}</span>
               <b>{numero(v, decimales)}{unidad ? ` ${unidad}` : ""}</b>

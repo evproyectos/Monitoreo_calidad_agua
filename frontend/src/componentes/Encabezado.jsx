@@ -1,4 +1,4 @@
-import { fechaCorta, TIPOS } from "../formato.js";
+import { fechaHora, TIPOS } from "../formato.js";
 
 export default function Encabezado({ estado, sinServicio, vista, sensor }) {
   let clase = "sin-dato";
@@ -30,7 +30,7 @@ export default function Encabezado({ estado, sinServicio, vista, sensor }) {
       </nav>
       <div className="estado">
         <span className="reloj">
-          Datos hasta <strong>{fechaCorta(estado?.ultima_hora_procesada)}</strong>
+          Datos hasta <strong>{fechaHora(estado?.ultima_hora_procesada)}</strong>
         </span>
         <span className={`pastilla ${clase}`} role="status">
           <span aria-hidden="true">{clase === "alarma" ? "▲" : "●"}</span>

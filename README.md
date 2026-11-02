@@ -148,6 +148,7 @@ tiempo real coinciden con el reloj; con el emisor acelerado llegan muchos mensaj
 
 | Ruta | Qué devuelve |
 |---|---|
+| `GET /health` | si el servicio está en pie (`ok` o `degradado` con el motivo), versión y huella de los modelos cargados |
 | `GET /api/estado` | hora de los datos, conexión, alarma activa, modo de pronóstico, estado de las alertas |
 | `GET /api/sensores` | estado actual de los 21 sensores: observado, pronóstico a 24 h, probabilidad de evento |
 | `GET /api/sensores/{nodo}/serie?horas=72` | serie horaria para graficar (observado, pronóstico, probabilidad) |

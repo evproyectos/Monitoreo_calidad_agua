@@ -35,21 +35,29 @@ export function numero(x, dec = 2) {
   return nf[dec].format(x);
 }
 
-const MESES = ["ene", "feb", "mar", "abr", "may", "jun", "jul", "ago", "sep", "oct", "nov", "dic"];
-// las fechas llegan como "2026-09-02 11:00:00" (hora local de la red)
+// las fechas llegan como "2026-09-02 11:00:00" (hora de Costa Rica) y se muestran como
+// "02/09/2026 11:00:00" (DD/MM/YYYY HH:mm:ss)
+const dos = (n) => String(n).padStart(2, "0");
 export function partes(texto) {
-  const [d, h] = texto.split(" ");
+  const [d, h = "00:00:00"] = texto.split(" ");
   const [a, m, dia] = d.split("-").map(Number);
-  return { a, m, dia, hora: h.slice(0, 5) };
+  return { a, m, dia, hora: (h + ":00").slice(0, 8) };
 }
-export function fechaCorta(texto) {
-  if (!texto) return "—";
+export function fechaDia(texto) {
   const p = partes(texto);
-  return `${p.dia} ${MESES[p.m - 1]}, ${p.hora}`;
+  return `${dos(p.dia)}/${dos(p.m)}/${p.a}`;
 }
+export function hora(texto) {
+  return texto ? partes(texto).hora : "—";
+}
+export function fechaHora(texto) {
+  if (!texto) return "—";
+  return `${fechaDia(texto)} ${hora(texto)}`;
+}
+// marcas del eje de tiempo: la fecha a medianoche, la hora (HH:mm) en las demás
 export function etiquetaEje(texto) {
   const p = partes(texto);
-  return p.hora === "00:00" ? `${p.dia} ${MESES[p.m - 1]}` : p.hora.slice(0, 2) + " h";
+  return p.hora === "00:00:00" ? fechaDia(texto) : p.hora.slice(0, 5);
 }
 export function horasEntre(a, b) {
   return Math.round((new Date(b.replace(" ", "T")) - new Date(a.replace(" ", "T"))) / 3600000);

@@ -7,7 +7,10 @@ entrenar; aquí solo se aplican los modelos. Los árboles del pronóstico usan a
 pronosticada para las próximas 24 h (monitoreo.pronostico_lluvia).
 """
 
+import hashlib
 import os
+from datetime import datetime
+
 import numpy as np
 import pandas as pd
 import joblib
@@ -18,6 +21,16 @@ from calidad_agua.red_neuronal import SALIDAS
 from monitoreo import pronostico_lluvia
 
 PISO_LOG = 0.05
+
+
+def huella(ruta):
+    """Identifica la versión de un archivo de modelo: SHA-256 (12 primeros) y fecha del archivo."""
+    h = hashlib.sha256()
+    with open(ruta, "rb") as f:
+        for bloque in iter(lambda: f.read(1 << 20), b""):
+            h.update(bloque)
+    return {"archivo": os.path.basename(ruta), "sha256": h.hexdigest()[:12],
+            "fecha": datetime.fromtimestamp(os.path.getmtime(ruta)).isoformat(timespec="seconds")}
 
 
 class Modelos:
@@ -31,6 +44,7 @@ class Modelos:
                     f"No se encontró {r}. Corre los notebooks 07 y 08 del proyecto Modelo_calidad_agua.")
         p = joblib.load(ruta_p)
         d = joblib.load(ruta_d)
+        self.version = {"pronostico": huella(ruta_p), "detector": huella(ruta_d)}
         self.modo = modo
         self.arboles = p["arboles"]
         self.columnas = p["columnas"]

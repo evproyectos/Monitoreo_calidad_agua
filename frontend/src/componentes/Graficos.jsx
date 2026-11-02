@@ -2,7 +2,7 @@ import {
   Area, CartesianGrid, ComposedChart, Line, ReferenceArea, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis,
 } from "recharts";
 import { useColores } from "../colores.js";
-import { etiquetaEje, fechaCorta, numero, PARAMETROS, tolerancia } from "../formato.js";
+import { etiquetaEje, fechaHora, numero, PARAMETROS, tolerancia } from "../formato.js";
 
 // marcas del eje: medianoche y mediodía; en pantallas angostas, solo medianoche
 function marcas(puntos) {
@@ -16,7 +16,7 @@ function Burbuja({ active, payload, label, par }) {
   const { unidad, decimales } = PARAMETROS[par];
   return (
     <div className="tooltip">
-      <div className="fecha">{fechaCorta(label)}</div>
+      <div className="fecha">{fechaHora(label)}</div>
       <div className="fila"><span>Observado</span><b>{numero(d[par], decimales)} {unidad}</b></div>
       <div className="fila"><span>Pronóstico (hecho 24 h antes)</span><b>{numero(d[`pronostico_${par}`], decimales)} {unidad}</b></div>
     </div>
@@ -93,7 +93,7 @@ export function GraficoProbabilidad({ serie, referencias }) {
       <div className="grafico-cabeza">
         <h3>Probabilidad de evento</h3>
         <span className="nota">
-          Alarma si supera {numero(umbral, 1)} durante {referencias?.confirmar_h ?? 3} horas seguidas
+          Alarma si supera {numero(umbral, 1)} durante {referencias?.confirmar_h ?? 2} horas seguidas
         </span>
       </div>
       <div className="lienzo bajo">
@@ -111,7 +111,7 @@ export function GraficoProbabilidad({ serie, referencias }) {
                            label={{ value: "umbral", position: "insideTopLeft", fill: c.alarma, fontSize: 10 }} />
             <Area dataKey="p_evento" stroke={c["tinta-2"]} strokeWidth={1.5} fill={c["tinta-2"]} fillOpacity={0.12}
                   isAnimationActive={false} connectNulls={false} />
-            <Tooltip formatter={(v) => [numero(v, 2), "probabilidad"]} labelFormatter={fechaCorta}
+            <Tooltip formatter={(v) => [numero(v, 2), "probabilidad"]} labelFormatter={fechaHora}
                      contentStyle={{ background: c.superficie, border: `1px solid ${c.linea}`, borderRadius: 8, fontSize: 12 }} />
             {serie.ahora && <ReferenceLine x={serie.ahora} stroke={c.tinta} strokeWidth={1} />}
           </ComposedChart>
