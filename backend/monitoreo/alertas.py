@@ -12,7 +12,7 @@ Las horas son las de los datos: con el emisor en tiempo real coinciden con el re
 Los mensajes salen en un hilo aparte, con reintentos, así un problema de red no frena al motor.
 Si no hay canal configurado, las alertas solo se escriben en la consola.
 
-Configuración (variables de entorno, nunca en el código ni en git):
+Configuración (en el archivo .env o como variables de entorno; nunca en el código ni en git):
   TELEGRAM_TOKEN         token del bot (te lo da @BotFather)
   TELEGRAM_CHAT_ID       chat o chats que reciben las alertas, separados por coma
   ALERTAS_RIESGO         1 (por defecto) o 0: avisar del riesgo en 24 h
@@ -249,7 +249,7 @@ class Alertas:
 def _token():
     token = os.environ.get("TELEGRAM_TOKEN", "").strip()
     if not token:
-        raise SystemExit("Define antes la variable de entorno TELEGRAM_TOKEN con el token del bot.")
+        raise SystemExit("Falta TELEGRAM_TOKEN: pon el token del bot en el archivo .env (ver .env.ejemplo).")
     return token
 
 

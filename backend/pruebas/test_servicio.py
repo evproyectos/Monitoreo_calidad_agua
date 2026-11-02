@@ -11,6 +11,7 @@ from monitoreo import servicio as srv
 from monitoreo.motor import Motor
 
 ULTIMA_HORA = str(INICIO + pd.Timedelta(hours=5))
+CLAVE = "clave-de-prueba"
 
 
 class DatosFalsos:
@@ -35,11 +36,12 @@ def esperar(cond, segundos=5):
 @pytest.fixture
 def cliente(tmp_path, monkeypatch):
     monkeypatch.delenv("TELEGRAM_TOKEN", raising=False)
+    monkeypatch.setenv("CLAVES_API", f"otra-clave, {CLAVE}")
     modelos = ModelosFalsos(p_evento=lambda h, n: 0.95 if n == "J10" and h >= INICIO + pd.Timedelta(hours=4) else 0.1)
     datos = []
     monkeypatch.setattr(srv, "Motor", lambda cfg: Motor(cfg, modelos, registrar=False))
     monkeypatch.setattr(srv, "ClienteDatos", lambda url: datos.append(DatosFalsos(url)) or datos[-1])
-    with TestClient(srv.crear_app(configuracion(tmp_path))) as c:
+    with TestClient(srv.crear_app(configuracion(tmp_path)), headers={"X-API-Key": CLAVE}) as c:
         # el ciclo en segundo plano consulta los datos y procesa las horas cerradas
         assert esperar(lambda: c.get("/api/estado").json()["ultima_hora_procesada"] == ULTIMA_HORA)
         c.modelos, c.datos = modelos, datos[0]
@@ -113,3 +115,15 @@ def test_predict_contaminacion_responde_422_en_espanol(cliente):
 
     r = cliente.post("/predict/contaminacion", content="no es json", headers={"Content-Type": "application/json"})
     assert r.status_code == 422 and "JSON" in r.json()["detail"]["detalles"][0]
+
+
+def test_predict_contaminacion_pide_la_clave_de_api(cliente, tmp_path):
+    r = cliente.post("/predict/contaminacion", json={"lecturas": lecturas(7)}, headers={"X-API-Key": ""})
+    assert r.status_code == 401
+    r = cliente.post("/predict/contaminacion", json={"lecturas": lecturas(7)}, headers={"X-API-Key": "otra"})
+    assert r.status_code == 401
+    assert cliente.get("/health").status_code == 200                # el resto no pide clave
+    registro = (tmp_path / "registros" / "accesos_rechazados.log").read_text(encoding="utf-8")
+    assert registro.count("POST /predict/contaminacion") == 2
+    doc = cliente.get("/openapi.json").json()
+    assert "X-API-Key" in str(doc["components"]["securitySchemes"])  # Swagger ofrece "Authorize"

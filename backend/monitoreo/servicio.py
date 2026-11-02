@@ -6,7 +6,8 @@ datos, pasa las lecturas al motor y procesa cada hora cerrada. Los endpoints sol
 del motor.
 
   GET /health                           si el servicio está en pie, versión y modelos cargados
-  POST /predict/contaminacion           predicción a pedido con lecturas que manda el cliente (422 si faltan datos)
+  POST /predict/contaminacion           predicción a pedido con lecturas que manda el cliente (422 si faltan
+                                        datos); pide la clave de API en el encabezado X-API-Key (401 sin ella)
   GET /api/estado                       hora simulada, conexión, alarma activa, modo de pronóstico
   GET /api/sensores                     estado actual de los 21 sensores (observado, pronóstico, detector)
   GET /api/sensores/{nodo}/serie?horas= serie horaria para graficar (observado, pronóstico, prob. de evento)
@@ -16,6 +17,7 @@ del motor.
   GET /                                 dashboard (React, compilado en frontend/dist)
 
 Uso (desde backend/):  python -m monitoreo.servicio            → http://127.0.0.1:8001
+Con CERTIFICADO_TLS y CLAVE_TLS en el .env atiende solo por HTTPS (https://127.0.0.1:8001).
 """
 
 import argparse
@@ -23,7 +25,7 @@ import threading
 import time
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
@@ -31,7 +33,7 @@ from fastapi.staticfiles import StaticFiles
 
 from calidad_agua import calidad, metas
 
-from monitoreo import __version__, prediccion
+from monitoreo import __version__, prediccion, seguridad
 from monitoreo.alertas import Alertas
 from monitoreo.cliente_datos import ClienteDatos
 from monitoreo.config import Config, RAIZ
@@ -90,7 +92,10 @@ def crear_app(cfg=None):
         print(f"Servicio de monitoreo listo · modo {cfg.modo_pronostico} · datos desde {cfg.url_datos}")
         print(f"Alertas: {estado['s'].alertas.canal.nombre}" + ("" if estado["s"].alertas.canal.nombre == "telegram"
               else "  (para Telegram: variables TELEGRAM_TOKEN y TELEGRAM_CHAT_ID)"))
-        print("Dashboard: http://127.0.0.1:8001" + ("" if DIST.exists() else
+        claves = len(seguridad.claves_configuradas())
+        print(f"Clave de API para /predict: {claves} configurada{'s' if claves != 1 else ''}" if claves else
+              "Sin CLAVES_API: /predict/contaminacion responde 503 hasta que se configure una clave")
+        print(f"Dashboard: {cfg.esquema}://127.0.0.1:8001" + ("" if DIST.exists() else
               "  (falta compilar el frontend: cd frontend && npm run build)"))
         yield
         estado["s"].detener()
@@ -116,6 +121,8 @@ def crear_app(cfg=None):
             detalles.append(f"{donde}: {MENSAJES.get(e.get('type'), e.get('msg'))}")
         return JSONResponse(status_code=422, content={"detail": {
             "error": "La solicitud no tiene el formato esperado.", "detalles": detalles}})
+
+    con_clave = Depends(seguridad.exigir_clave(seguridad.RegistroAccesos(cfg.carpeta_registros)))
 
     def servicio():
         if "s" not in estado:
@@ -150,8 +157,10 @@ def crear_app(cfg=None):
                 "ultima_hora_procesada": e["ultima_hora_procesada"],
                 "alertas": s.alertas.canal.nombre}
 
-    @app.post("/predict/contaminacion",
-              responses={422: {"description": "Faltan datos o no tienen el formato esperado"}})
+    @app.post("/predict/contaminacion", dependencies=[con_clave],
+              responses={401: {"description": "Clave de API ausente o inválida"},
+                         422: {"description": "Faltan datos o no tienen el formato esperado"},
+                         503: {"description": "El servicio no tiene claves de API configuradas"}})
     def predecir_contaminacion(solicitud: prediccion.SolicitudContaminacion):
         """
         Probabilidad de evento de contaminación por sensor para la última hora cerrada, pronóstico a
@@ -221,7 +230,6 @@ def crear_app(cfg=None):
 
 
 if __name__ == "__main__":
-    import uvicorn
     ap = argparse.ArgumentParser()
     ap.add_argument("--modo", choices=["combinado", "arboles"], default=None)
     ap.add_argument("--puerto", type=int, default=8001)
@@ -229,4 +237,5 @@ if __name__ == "__main__":
     cfg = Config()
     if args.modo:
         cfg.modo_pronostico = args.modo
-    uvicorn.run(crear_app(cfg), host="127.0.0.1", port=args.puerto, log_level="warning")
+    seguridad.servidor(crear_app(cfg), "127.0.0.1", args.puerto, cfg.certificado_tls, cfg.clave_tls,
+                       log_level="warning").run()

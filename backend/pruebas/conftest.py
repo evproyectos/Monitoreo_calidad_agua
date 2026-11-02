@@ -4,12 +4,16 @@ modelos "de mentira" que dan pronósticos y probabilidades fijadas por la prueba
 el motor, las alarmas, las alertas y la API sin los modelos entrenados ni los datos reales.
 """
 
+import os
+
 import numpy as np
 import pandas as pd
 import pytest
 
-from calidad_agua.red_neuronal import SALIDAS
-from monitoreo.config import Config
+os.environ["MONITOREO_SIN_ENV"] = "1"            # las pruebas no leen el .env de la máquina
+
+from calidad_agua.red_neuronal import SALIDAS  # noqa: E402  (después de MONITOREO_SIN_ENV)
+from monitoreo.config import Config  # noqa: E402  (después de MONITOREO_SIN_ENV)
 
 SENSORES = ["J280", "J10", "J20"]                 # en el orden de la red (J280 es la fuente)
 PARAMETROS = ["CL2", "TEMP", "TURB", "PH", "P"]

@@ -3,8 +3,12 @@ Prueba de POST /predict/contaminacion contra el servicio en marcha (RF-003.1).
 
   1. Latencia: manda solicitudes con lecturas reales del periodo de prueba (98 h de toda la red,
      horas al azar) y reporta los percentiles 50 y 95 (criterio: p95 ≤ 500 ms).
-  2. Datos faltantes: manda solicitudes incompletas y revisa que la respuesta sea 422 con detalle.
+  2. Datos faltantes: manda solicitudes incompletas y revisa que la respuesta sea 422 con detalle,
+     y que sin clave de API o con una equivocada la respuesta sea 401.
   3. Con --comparar, revisa que los números coincidan con el cálculo por lotes de los notebooks.
+
+Usa la primera clave de CLAVES_API (del .env) y, si el servicio está en HTTPS (CERTIFICADO_TLS),
+se conecta por HTTPS confiando en ese certificado.
 
 Uso (desde backend/, con el servicio corriendo en el puerto 8001):
   python -m monitoreo.probar_prediccion                  # 100 solicitudes
@@ -22,7 +26,8 @@ import requests
 from calidad_agua import carga
 from calidad_agua.red_neuronal import SALIDAS
 
-from monitoreo import prediccion
+from monitoreo import prediccion, seguridad
+from monitoreo.config import Config
 
 HORAS_ENVIO = 98
 
@@ -44,14 +49,24 @@ def percentil(xs, q):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--url", default="http://127.0.0.1:8001")
+    ap.add_argument("--url", default=None, help="por defecto http(s)://127.0.0.1:8001 según el .env")
+    ap.add_argument("--clave", default=None, help="clave de API (por defecto la primera de CLAVES_API)")
     ap.add_argument("-n", type=int, default=100, help="solicitudes para medir la latencia")
     ap.add_argument("--comparar", action="store_true", help="comparar con el cálculo por lotes (más lento)")
     args = ap.parse_args()
-    url = f"{args.url}/predict/contaminacion"
+    cfg = Config()
+    base_url = args.url or f"{cfg.esquema}://127.0.0.1:8001"
+    url = f"{base_url}/predict/contaminacion"
+    clave = args.clave or next(iter(seguridad.claves_configuradas()), None)
+    if not clave:
+        raise SystemExit("Falta la clave de API: defina CLAVES_API en el .env o pase --clave.")
     s = requests.Session()
+    s.headers[seguridad.ENCABEZADO] = clave
+    # certificado propio (autofirmado): se pasa en cada llamada, porque REQUESTS_CA_BUNDLE del sistema
+    # tendría prioridad sobre el de la sesión
+    verificar = str(cfg.certificado_tls) if cfg.certificado_tls else True
 
-    salud = s.get(f"{args.url}/health", timeout=10).json()
+    salud = s.get(f"{base_url}/health", timeout=10, verify=verificar).json()
     print(f"Servicio {salud['version']} · {salud['estado']}")
 
     crudo = carga.cargar_todo()
@@ -67,11 +82,11 @@ def main():
     # ------------------------------------------------------------- 1. latencia
     print(f"\n1. Latencia con {len(horas)} solicitudes (98 h de lecturas de {len(sensores)} sensores cada una)")
     cuerpos = [solicitud(crudo, columnas, h) for h in horas]
-    s.post(url, json=cuerpos[0], timeout=30)                  # la primera calienta TensorFlow
+    s.post(url, json=cuerpos[0], timeout=30, verify=verificar)                  # la primera calienta TensorFlow
     total, servidor, respuestas = [], [], []
     for h, cuerpo in zip(horas, cuerpos):
         t0 = time.perf_counter()
-        r = s.post(url, json=cuerpo, timeout=30)
+        r = s.post(url, json=cuerpo, timeout=30, verify=verificar)
         total.append((time.perf_counter() - t0) * 1000)
         if r.status_code != 200:
             raise SystemExit(f"   la hora {h} respondió {r.status_code}: {r.text[:300]}")
@@ -90,7 +105,7 @@ def main():
     print(f"   nivel de la red en las horas probadas: {niveles}")
 
     # ------------------------------------------------------------- 2. datos faltantes
-    print("\n2. Solicitudes con datos faltantes (deben responder 422)")
+    print("\n2. Solicitudes incompletas o sin clave (deben responder 422 o 401)")
     base = cuerpos[0]
     sin_columna = {"lecturas": [{"fecha": lec["fecha"],
                                  "valores": {k: v for k, v in lec["valores"].items() if k != "CL2_J144"}}
@@ -110,8 +125,14 @@ def main():
         "sensor desconocido": {**base, "sensores": ["J999"]},
     }
     ok_422 = True
+    for nombre, encabezado in [("sin clave de API", None), ("clave de API equivocada", "no-es-la-clave")]:
+        r = requests.post(url, json=base, timeout=30, verify=verificar,
+                          headers={seguridad.ENCABEZADO: encabezado} if encabezado else {})
+        bien = r.status_code == 401
+        ok_422 &= bien
+        print(f"   {'ok ' if bien else 'MAL'} {nombre}: {r.status_code} · {r.json()['detail']['error']}")
     for nombre, cuerpo in casos.items():
-        r = s.post(url, json=cuerpo, timeout=30)
+        r = s.post(url, json=cuerpo, timeout=30, verify=verificar)
         det = r.json().get("detail", {})
         bien = r.status_code == 422 and isinstance(det, dict) and det.get("error")
         ok_422 &= bool(bien)
@@ -124,10 +145,8 @@ def main():
     ok_igual = True
     if args.comparar:
         print("\n3. Comparación con el cálculo por lotes de los notebooks")
-        from monitoreo.config import Config
         from monitoreo.modelos import Modelos
         from monitoreo.verificar import referencia_por_lotes
-        cfg = Config()
         pron_b, det_b = referencia_por_lotes(Modelos(cfg.carpeta_modelos, cfg.modo_pronostico), crudo,
                                              pd.DatetimeIndex(horas))
         api = pd.DataFrame([{"fecha": pd.Timestamp(d["hora_evaluada"]), "nodo": x["sensor"],

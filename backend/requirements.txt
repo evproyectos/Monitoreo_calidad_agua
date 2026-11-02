@@ -1,5 +1,7 @@
 fastapi
 uvicorn[standard]
 requests
+python-dotenv
+cryptography
 # Además, el paquete del proyecto de modelos (mismo código que los notebooks):
 #   pip install -e "..\..\Modelo_calidad_agua[red]"
