@@ -21,6 +21,7 @@ Con CERTIFICADO_TLS y CLAVE_TLS en el .env atiende solo por HTTPS (https://127.0
 """
 
 import argparse
+import asyncio
 import threading
 import time
 from contextlib import asynccontextmanager
@@ -40,6 +41,26 @@ from monitoreo.config import Config, RAIZ
 from monitoreo.motor import Motor
 
 DIST = RAIZ / "frontend" / "dist"
+
+
+def silenciar_cortes(loop):
+    """
+    En Windows, asyncio imprime un error largo (ConnectionResetError, WinError 10054) cada vez que un
+    cliente corta la conexión de golpe, por ejemplo un navegador que todavía no confía en el
+    certificado de prueba. No es una falla del servicio: esos casos se ignoran y lo demás se
+    reporta como siempre.
+    """
+    anterior = loop.get_exception_handler()
+
+    def manejador(lp, contexto):
+        if isinstance(contexto.get("exception"), ConnectionResetError):
+            return
+        if anterior is not None:
+            anterior(lp, contexto)
+        else:
+            lp.default_exception_handler(contexto)
+
+    loop.set_exception_handler(manejador)
 
 
 class Servicio:
@@ -86,6 +107,7 @@ def crear_app(cfg=None):
 
     @asynccontextmanager
     async def ciclo_de_vida(_app):
+        silenciar_cortes(asyncio.get_running_loop())
         print("Cargando modelos...")
         estado["s"] = Servicio(cfg)
         estado["s"].iniciar()

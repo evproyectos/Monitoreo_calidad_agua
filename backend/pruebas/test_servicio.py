@@ -127,3 +127,17 @@ def test_predict_contaminacion_pide_la_clave_de_api(cliente, tmp_path):
     assert registro.count("POST /predict/contaminacion") == 2
     doc = cliente.get("/openapi.json").json()
     assert "X-API-Key" in str(doc["components"]["securitySchemes"])  # Swagger ofrece "Authorize"
+
+
+def test_cortes_de_conexion_no_llenan_la_consola_de_errores():
+    import asyncio
+    loop = asyncio.new_event_loop()
+    try:
+        vistos = []
+        loop.set_exception_handler(lambda lp, ctx: vistos.append(ctx["message"]))
+        srv.silenciar_cortes(loop)
+        loop.call_exception_handler({"message": "corte", "exception": ConnectionResetError(10054, "WinError")})
+        loop.call_exception_handler({"message": "otro error", "exception": ValueError("x")})
+        assert vistos == ["otro error"]
+    finally:
+        loop.close()
