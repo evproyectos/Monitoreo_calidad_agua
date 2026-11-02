@@ -57,6 +57,9 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      - uses: gitleaks/gitleaks-action@v2
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      # gitleaks directo (no la acción gitleaks-action, que en un push revisa solo el rango de
+      # commits desde el anterior y falla si ese commit no existe, como en el primer push)
+      - name: Instalar gitleaks
+        run: curl -sSL https://github.com/gitleaks/gitleaks/releases/download/v8.24.3/gitleaks_8.24.3_linux_x64.tar.gz | tar -xz gitleaks
+      - name: Buscar secretos en todo el historial
+        run: ./gitleaks git --redact --verbose .
