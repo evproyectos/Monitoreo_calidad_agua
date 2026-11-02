@@ -20,3 +20,10 @@ secretos/
 iniciar.ps1
 detener.ps1
 .procesos
+
+# reportes de cobertura de pytest-cov
+.coverage
+htmlcov/
+
+# configuración del editor
+.vscode/
