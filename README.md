@@ -211,7 +211,7 @@ autoridad reconocida, que se configurará con Docker.
 
 | Ruta | Qué devuelve |
 |---|---|
-| `GET /health` | si el servicio está en pie (`ok` o `degradado` con el motivo), versión y huella de los modelos cargados |
+| `GET /health` | si el servicio está en pie (`ok` o `degradado` con el motivo), versión, y de cada modelo cargado su huella y la corrida de MLflow que lo generó (`run_id`, experimento y huella de los datos) |
 | `POST /predict/contaminacion` | requiere `X-API-Key`. Con las lecturas de 15 min de toda la red de las últimas 98 h (mismo formato que `POST /lecturas` de la API de datos): probabilidad de evento, tipo sugerido, pronóstico a 24 h y nivel verde, amarillo o rojo por sensor y para la red. 422 con el detalle si faltan columnas, lecturas o datos. El nivel amarillo empieza en `UMBRAL_AMARILLO` (0,5 por defecto) |
 | `GET /api/estado` | hora de los datos, conexión, alarma activa, modo de pronóstico, estado de las alertas |
 | `GET /api/sensores` | estado actual de los 21 sensores: observado, pronóstico a 24 h, probabilidad de evento |

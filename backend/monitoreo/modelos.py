@@ -44,7 +44,9 @@ class Modelos:
                     f"No se encontró {r}. Corre los notebooks 07 y 08 del proyecto Modelo_calidad_agua.")
         p = joblib.load(ruta_p)
         d = joblib.load(ruta_d)
-        self.version = {"pronostico": huella(ruta_p), "detector": huella(ruta_d)}
+        # versión de cada modelo: huella del archivo y, si lo trae, el experimento de MLflow que lo generó
+        self.version = {"pronostico": {**huella(ruta_p), **({"mlflow": p["mlflow"]} if "mlflow" in p else {})},
+                        "detector": {**huella(ruta_d), **({"mlflow": d["mlflow"]} if "mlflow" in d else {})}}
         self.modo = modo
         self.arboles = p["arboles"]
         self.columnas = p["columnas"]

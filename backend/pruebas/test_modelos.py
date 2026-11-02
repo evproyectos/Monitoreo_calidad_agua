@@ -43,7 +43,8 @@ def carpeta(tmp_path_factory):
     arboles = {p: modelo.entrenar(tabla, p, cols, filas) for p in ["CL2", "TURB", "PH"]}
     joblib.dump({"arboles": arboles, "columnas": cols, "tipicos": tipicos, "normalizacion": None,
                  "elegido": {"CL2": "arboles", "TURB": "combinado", "PH": "combinado"},
-                 "pronostico_lluvia": {"modelos": clima.MODELOS, "columnas": clima.COLUMNAS}, "redes": []},
+                 "pronostico_lluvia": {"modelos": clima.MODELOS, "columnas": clima.COLUMNAS}, "redes": [],
+                 "mlflow": {"run_id": "abc123", "experimento": "pronostico_24h", "dataset_sha256": "f" * 64}},
                 carpeta / "pronostico_24h_final.joblib")
 
     hd = detector.horario(w)
@@ -83,6 +84,8 @@ def test_carga_orden_y_version(carpeta):
     assert m.orden_sensores == SENSORES and m.sensores == sorted(SENSORES)
     assert m.elegido == {"CL2": "arboles", "TURB": "arboles", "PH": "arboles"} and m.redes == []
     assert set(m.version) == {"pronostico", "detector"} and m.umbral == 0.9
+    assert m.version["pronostico"]["mlflow"]["run_id"] == "abc123"         # de qué experimento salió
+    assert "mlflow" not in m.version["detector"]                           # un modelo anterior a MLflow
 
 
 def test_pronostico_y_deteccion_de_una_hora(carpeta):
