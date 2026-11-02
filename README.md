@@ -29,7 +29,10 @@ backend/
     verificar.py       comprueba que el motor en vivo da lo mismo que los notebooks
     prediccion.py      POST /predict/contaminacion: predicción con lecturas que manda el cliente
     probar_prediccion.py  prueba de ese endpoint: latencia p95, errores 422 y mismos números
+  pruebas/             pruebas unitarias del servicio (pytest)
   requirements.txt
+  requirements-dev.txt  lo que hace falta para las pruebas y el estilo
+.github/              integración continua en GitHub
 frontend/              dashboard en React (Vite + Recharts)
   src/
     App.jsx            página y navegación entre las dos vistas (#/general y #/sensor/J224)
@@ -66,6 +69,27 @@ con la variable de entorno `FUENTE_PRONOSTICO`:
   del emisor, que son de fechas pasadas: el servicio ve el pronóstico que existía en ese momento.
 - `open-meteo`: el pronóstico vigente de la API de Open-Meteo, para datos en tiempo real. Se
   consulta cada hora; si no hay conexión, se sigue con el último que se obtuvo.
+
+## Pruebas
+
+Las pruebas del servicio no necesitan los modelos entrenados ni los datos: usan lecturas
+sintéticas de una red pequeña y unos modelos de prueba que dan pronósticos y probabilidades
+fijados por cada prueba. Con eso corren de verdad el motor, las alarmas, las alertas, la API
+(incluidos `/health` y los errores 422 de `/predict/contaminacion`) y la carga de modelos de
+árboles entrenados en la misma prueba. Desde `backend/`:
+
+```
+pip install -r requirements-dev.txt
+pytest --cov                 # pruebas y cobertura (mínimo 70 %)
+flake8                       # estilo PEP 8 (líneas de hasta 120 caracteres)
+```
+
+`verificar`, `ejecutar` y `probar_prediccion` no entran en la medición: necesitan los datos
+reales o el servicio corriendo y se usan a mano (ver abajo).
+
+En GitHub, el CI (`.github/workflows/ci.yml`) corre en cada push y en cada pull request:
+estilo, pruebas con cobertura mínima de 70 % (instala `calidad_agua` desde el repositorio
+de modelos), compilación del dashboard y búsqueda de secretos en el historial (gitleaks).
 
 ## Uso
 

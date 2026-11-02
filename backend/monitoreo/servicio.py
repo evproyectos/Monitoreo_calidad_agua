@@ -62,8 +62,8 @@ class Servicio:
                 lecturas = self.cliente.lecturas_desde(self.motor.ultima_lectura)
                 self.conectado, self.ultimo_error = True, None
                 with self.candado:
-                    for l in lecturas:
-                        self.motor.recibir(l["fecha"], l["valores"])
+                    for lec in lecturas:
+                        self.motor.recibir(lec["fecha"], lec["valores"])
                     novedades = self.motor.procesar()
                     self.alertas.revisar(self.motor, novedades)
                 self.ultimo_ciclo_s = round(time.time() - t0, 2)
@@ -150,7 +150,8 @@ def crear_app(cfg=None):
                 "ultima_hora_procesada": e["ultima_hora_procesada"],
                 "alertas": s.alertas.canal.nombre}
 
-    @app.post("/predict/contaminacion", responses={422: {"description": "Faltan datos o no tienen el formato esperado"}})
+    @app.post("/predict/contaminacion",
+              responses={422: {"description": "Faltan datos o no tienen el formato esperado"}})
     def predecir_contaminacion(solicitud: prediccion.SolicitudContaminacion):
         """
         Probabilidad de evento de contaminación por sensor para la última hora cerrada, pronóstico a

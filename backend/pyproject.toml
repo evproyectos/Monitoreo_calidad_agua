@@ -1,0 +1,15 @@
+# Configuración de las pruebas y del estilo del servicio (no es un paquete instalable).
+
+[tool.pytest.ini_options]
+testpaths = ["pruebas"]
+pythonpath = ["."]                  # para importar monitoreo sin instalarlo
+
+# Cobertura del servicio. Quedan fuera los scripts que necesitan los datos reales o el servicio
+# corriendo (verificar, ejecutar, probar_prediccion): se corren a mano, ver README.
+[tool.coverage.run]
+source = ["monitoreo"]
+omit = ["monitoreo/verificar.py", "monitoreo/ejecutar.py", "monitoreo/probar_prediccion.py"]
+
+[tool.coverage.report]
+fail_under = 70
+show_missing = true

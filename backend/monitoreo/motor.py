@@ -156,7 +156,8 @@ class Motor:
             tipos = sub.loc[en_alarma, "tipo"].tolist() if en_alarma else []
             novedades += self._actualizar_alarma(hora, en_alarma, tipos)
             self.ultimo_estado_sensores = {
-                n: {"p_evento": float(sub["p_evento"].get(n, np.nan)), "tipo": carga.TIPOS_EVENTO.get(int(sub["tipo"].get(n, 0)), "?"),
+                n: {"p_evento": float(sub["p_evento"].get(n, np.nan)),
+                    "tipo": carga.TIPOS_EVENTO.get(int(sub["tipo"].get(n, 0)), "?"),
                     "en_alarma": n in en_alarma} for n in self.sensores}
 
         self.pronosticos.append(pron)
@@ -303,7 +304,8 @@ class Motor:
     def estado(self):
         seg = time.time() - self.inicio_reloj
         return {"hora_simulada": str(self.ultima_lectura) if self.ultima_lectura is not None else None,
-                "ultima_hora_procesada": str(self.ultima_hora_procesada) if self.ultima_hora_procesada is not None else None,
+                "ultima_hora_procesada": (str(self.ultima_hora_procesada)
+                                          if self.ultima_hora_procesada is not None else None),
                 "lecturas_recibidas": self.lecturas_recibidas,
                 "lecturas_por_segundo": round(self.lecturas_recibidas / max(seg, 1e-9), 1),
                 "alarma_activa": self.alarma_abierta is not None,

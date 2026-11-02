@@ -154,7 +154,10 @@ class Alertas:
             return
         ahora = motor.ultima_hora_procesada
         anterior = getattr(self, "_ultima_hora", None)
+        if ahora == anterior:
+            return                          # el servicio llama cada segundo: solo cuentan las horas nuevas
         self._ultima_hora = ahora
+        horas_nuevas = 1 if anterior is None else int((ahora - anterior) / pd.Timedelta(hours=1))
         sensores = {s["nodo"]: s for s in motor.resumen_sensores()}
         # un ciclo puede procesar varias horas (al arrancar o con el emisor acelerado): cada aviso
         # lleva los valores de su propia hora
@@ -164,7 +167,7 @@ class Alertas:
             else:
                 self.avisar(self._texto_cerrada(motor, n))
         if self.con_riesgo:
-            self._revisar_riesgo(motor, sensores, ahora)
+            self._revisar_riesgo(motor, sensores, ahora, horas_nuevas)
         if self.hora_resumen >= 0:
             # al arrancar no se manda: solo cuando el procesamiento pasa por la hora del resumen
             horas = pd.date_range(anterior, ahora, freq="1h")[1:] if anterior is not None else []
@@ -179,8 +182,9 @@ class Alertas:
         else:
             tipo = next((x["tipo_sugerido"] for x in motor.alarmas if x["id"] == n["id"]), "?")
         tipo_txt = TIPOS.get(tipo, "Evento sin clasificar")
+        plural = "es" if len(n["sensores"]) > 1 else ""
         lineas = [f"🔴 <b>Alarma #{n['id']}: {html.escape(tipo_txt)}</b> (tipo sugerido)",
-                  f"{_fecha(n['hora'])} · {len(n['sensores'])} sensor{'es' if len(n['sensores']) > 1 else ''} en alarma"]
+                  f"{_fecha(n['hora'])} · {len(n['sensores'])} sensor{plural} en alarma"]
         for nodo in n["sensores"][:6]:
             s = sensores.get(nodo, {})
             valores = " · ".join(f"{NOMBRE[p]} {_num(s.get(p))}{UNIDAD[p]}" for p in ["CL2", "TURB", "PH"])
@@ -194,10 +198,11 @@ class Alertas:
         a = next((x for x in motor.alarmas if x["id"] == n["id"]), None)
         if a is None:
             return f"🟢 <b>Alarma #{n['id']} cerrada</b> · {_fecha(n['hora'])}"
-        return (f"🟢 <b>Alarma #{a['id']} cerrada</b> · {html.escape(TIPOS.get(a['tipo_sugerido'], a['tipo_sugerido']))}\n"
+        tipo = html.escape(TIPOS.get(a["tipo_sugerido"], a["tipo_sugerido"]))
+        return (f"🟢 <b>Alarma #{a['id']} cerrada</b> · {tipo}\n"
                 f"De {_fecha(a['inicio'])} a {_fecha(a['fin'])} ({a['horas']} h) · sensores: {a['sensores']}")
 
-    def _revisar_riesgo(self, motor, sensores, ahora):
+    def _revisar_riesgo(self, motor, sensores, ahora, horas_nuevas=1):
         nuevos = []
         for nodo, s in sensores.items():
             for par in ["CL2", "TURB", "PH"]:
@@ -208,7 +213,7 @@ class Alertas:
                         nuevos.append((nodo, par, s.get(f"pronostico_{par}"), limite))
                     self.riesgo[clave] = 0
                 elif clave in self.riesgo:
-                    self.riesgo[clave] += 1
+                    self.riesgo[clave] += horas_nuevas
                     if self.riesgo[clave] >= HORAS_FIN_RIESGO:
                         del self.riesgo[clave]
         if nuevos:
@@ -231,7 +236,8 @@ class Alertas:
                   f"Alarmas en las últimas 24 h: {len(alarmas)}"
                   + (" (una en curso)" if motor.alarma_abierta else "")]
         for a in alarmas[-5:]:
-            lineas.append(f"• #{a['id']} {html.escape(TIPOS.get(a['tipo_sugerido'], a['tipo_sugerido']))}: {a['sensores']}")
+            tipo = html.escape(TIPOS.get(a["tipo_sugerido"], a["tipo_sugerido"]))
+            lineas.append(f"• #{a['id']} {tipo}: {a['sensores']}")
         lineas.append("Fuera de norma ahora: " + (", ".join(fuera) if fuera else "ninguno"))
         if self.con_riesgo:
             lineas.append("Con riesgo en 24 h: " + (", ".join(riesgo) if riesgo else "ninguno"))

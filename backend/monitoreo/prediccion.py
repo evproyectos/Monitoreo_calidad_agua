@@ -81,7 +81,7 @@ def validar(solicitud, sensores, historia_h):
             raise ErrorEntrada("Sensores desconocidos en 'sensores'.",
                                [f"{n} no es un sensor de la red" for n in desconocidos])
 
-    fechas = [_hora_local(l.fecha) for l in solicitud.lecturas]
+    fechas = [_hora_local(lec.fecha) for lec in solicitud.lecturas]
     mal_alineadas = [str(f) for f in fechas if f.minute % 15 or f.second or f.microsecond]
     if mal_alineadas:
         raise ErrorEntrada("Las lecturas deben ser cada 15 min (minuto 00, 15, 30 o 45).",
@@ -92,8 +92,8 @@ def validar(solicitud, sensores, historia_h):
                            [f"fecha repetida o fuera de orden: {f}" for f in desordenadas[:5]])
 
     faltan = []
-    for f, l in zip(fechas, solicitud.lecturas):
-        ausentes = [c for c in esperadas if c not in l.valores]
+    for f, lec in zip(fechas, solicitud.lecturas):
+        ausentes = [c for c in esperadas if c not in lec.valores]
         if ausentes:
             muestra = ", ".join(ausentes[:6]) + (f" y {len(ausentes) - 6} más" if len(ausentes) > 6 else "")
             faltan.append(f"lectura {f}: faltan {muestra}")
@@ -102,7 +102,7 @@ def validar(solicitud, sensores, historia_h):
                            f"columnas de la red ({len(esperadas)}); use null si un sensor no reportó.",
                            faltan[:5] + ([f"... y {len(faltan) - 5} lecturas más"] if len(faltan) > 5 else []))
 
-    t = pd.DataFrame([l.valores for l in solicitud.lecturas], index=pd.DatetimeIndex(fechas, name="fecha"))
+    t = pd.DataFrame([lec.valores for lec in solicitud.lecturas], index=pd.DatetimeIndex(fechas, name="fecha"))
     t = t[esperadas].astype("float64")
 
     # misma regla que el motor: la hora se cierra cuando llega una lectura de la hora siguiente

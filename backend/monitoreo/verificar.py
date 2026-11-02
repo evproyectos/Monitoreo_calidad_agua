@@ -30,7 +30,6 @@ from monitoreo.modelos import Modelos
 from monitoreo.motor import Motor
 
 
-
 def referencia_por_lotes(modelos, crudo, horas):
     """Lo que calculan los notebooks: tabla completa (todo el periodo), mismos modelos."""
     t15 = calidad.lecturas_operativas(crudo)
@@ -52,7 +51,8 @@ def main():
     crudo = carga.cargar_todo()
     INICIO_PRUEBA = carga.periodos()["prueba"][0]          # viene en metadatos.json con los datos
     sensores_cols = [c for c in crudo.columns if not c.startswith(("evento_", "falla_")) and c != "particion"]
-    fin = crudo.index[-1] if args.dias is None else INICIO_PRUEBA + pd.Timedelta(days=args.dias) - pd.Timedelta(minutes=15)
+    fin = (crudo.index[-1] if args.dias is None
+           else INICIO_PRUEBA + pd.Timedelta(days=args.dias) - pd.Timedelta(minutes=15))
     envio = crudo.loc[INICIO_PRUEBA - pd.Timedelta(days=args.precarga_dias): fin, sensores_cols]
 
     # ---------------------------------------------------------------- en vivo
@@ -77,7 +77,8 @@ def main():
     horas = pd.DatetimeIndex(sorted(det_v["fecha"].unique()))
     # horas en que el motor ya contaba alarmas (desde el fin del calentamiento, en la precarga)
     horas_con_alarma = pd.DatetimeIndex(sorted(det_todo["fecha"].unique()))
-    horas_con_alarma = horas_con_alarma[(horas_con_alarma - motor.primera_lectura) >= pd.Timedelta(hours=cfg.historia_h)]
+    listas = (horas_con_alarma - motor.primera_lectura) >= pd.Timedelta(hours=cfg.historia_h)
+    horas_con_alarma = horas_con_alarma[listas]
 
     # ---------------------------------------------------------------- por lotes
     pron_b, det_b = referencia_por_lotes(modelos, crudo, horas_con_alarma)

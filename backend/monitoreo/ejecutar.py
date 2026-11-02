@@ -12,7 +12,6 @@ Uso (desde backend/, con la API de datos y el emisor de Simulador_sensor corrien
 import argparse
 import time
 
-import pandas as pd
 
 from monitoreo.cliente_datos import ClienteDatos
 from monitoreo.config import Config
@@ -43,8 +42,8 @@ def main():
     try:
         while True:
             t0 = time.time()
-            for l in cliente.lecturas_desde(motor.ultima_lectura):
-                motor.recibir(l["fecha"], l["valores"])
+            for lec in cliente.lecturas_desde(motor.ultima_lectura):
+                motor.recibir(lec["fecha"], lec["valores"])
             horas = len(motor.horas_pendientes())
             for n in motor.procesar():
                 if n["evento"] == "alarma_abierta":

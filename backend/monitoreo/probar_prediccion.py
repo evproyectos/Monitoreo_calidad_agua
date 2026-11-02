@@ -59,7 +59,8 @@ def main():
     sensores = [n for n in carga.sensores(crudo)]
     columnas = prediccion.columnas_esperadas(sensores)
     rng = np.random.default_rng(0)
-    candidatas = pd.date_range(inicio + pd.Timedelta(hours=HORAS_ENVIO), pd.Timestamp(fin) - pd.Timedelta(hours=2), freq="1h")
+    candidatas = pd.date_range(inicio + pd.Timedelta(hours=HORAS_ENVIO), pd.Timestamp(fin) - pd.Timedelta(hours=2),
+                               freq="1h")
     horas = sorted(rng.choice(candidatas, size=min(args.n, len(candidatas)), replace=False))
     horas = [pd.Timestamp(h) for h in horas]
 
@@ -91,9 +92,11 @@ def main():
     # ------------------------------------------------------------- 2. datos faltantes
     print("\n2. Solicitudes con datos faltantes (deben responder 422)")
     base = cuerpos[0]
-    sin_columna = {"lecturas": [{"fecha": l["fecha"], "valores": {k: v for k, v in l["valores"].items() if k != "CL2_J144"}}
-                                for l in base["lecturas"]]}
-    sin_cloro = {"lecturas": [{"fecha": l["fecha"], "valores": {**l["valores"], "CL2_J144": None}} for l in base["lecturas"]]}
+    sin_columna = {"lecturas": [{"fecha": lec["fecha"],
+                                 "valores": {k: v for k, v in lec["valores"].items() if k != "CL2_J144"}}
+                                for lec in base["lecturas"]]}
+    sin_cloro = {"lecturas": [{"fecha": lec["fecha"], "valores": {**lec["valores"], "CL2_J144": None}}
+                              for lec in base["lecturas"]]}
     casos = {
         "falta la columna CL2_J144": sin_columna,
         "CL2_J144 llega siempre en null": sin_cloro,
@@ -113,7 +116,8 @@ def main():
         bien = r.status_code == 422 and isinstance(det, dict) and det.get("error")
         ok_422 &= bool(bien)
         primero = (det.get("detalles") or [""])[0] if isinstance(det, dict) else ""
-        print(f"   {'ok ' if bien else 'MAL'} {nombre}: {r.status_code} · {det.get('error') if isinstance(det, dict) else det}"
+        error = det.get("error") if isinstance(det, dict) else det
+        print(f"   {'ok ' if bien else 'MAL'} {nombre}: {r.status_code} · {error}"
               + (f" ({primero})" if primero else ""))
 
     # ------------------------------------------------------------- 3. comparación
@@ -126,8 +130,9 @@ def main():
         cfg = Config()
         pron_b, det_b = referencia_por_lotes(Modelos(cfg.carpeta_modelos, cfg.modo_pronostico), crudo,
                                              pd.DatetimeIndex(horas))
-        api = pd.DataFrame([{"fecha": pd.Timestamp(d["hora_evaluada"]), "nodo": x["sensor"], "p_evento": x["probabilidad_evento"],
-                             **{p: x["pronostico_24h"][p] for p in SALIDAS}} for d in respuestas for x in d["sensores"]])
+        api = pd.DataFrame([{"fecha": pd.Timestamp(d["hora_evaluada"]), "nodo": x["sensor"],
+                             "p_evento": x["probabilidad_evento"], **{p: x["pronostico_24h"][p] for p in SALIDAS}}
+                            for d in respuestas for x in d["sensores"]])
         m = api.merge(pron_b[["fecha", "nodo"] + SALIDAS], on=["fecha", "nodo"], suffixes=("", "_b")) \
                .merge(det_b[["fecha", "nodo", "p_evento"]], on=["fecha", "nodo"], suffixes=("", "_b"))
         for p in SALIDAS:

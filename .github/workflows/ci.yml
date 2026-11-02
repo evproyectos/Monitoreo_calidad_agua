@@ -1,0 +1,62 @@
+# Integración continua (RNF-007 y RNF-004): en cada push y en cada pull request revisa el estilo
+# del servicio, corre sus pruebas con cobertura mínima de 70 %, compila el dashboard y busca
+# secretos en el historial.
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  servicio:
+    name: Servicio (estilo, pruebas y cobertura)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+      - name: Instalar (con el paquete calidad_agua del repositorio de modelos)
+        run: |
+          pip install -r requirements-dev.txt
+          pip install "calidad-agua[red] @ git+https://github.com/evproyectos/Modelo_calidad_agua.git"
+      - name: Estilo (flake8)
+        run: flake8
+      - name: Pruebas y cobertura (mínimo 70 %)
+        run: pytest --cov --cov-report=term-missing --cov-fail-under=70
+      - name: Resumen de cobertura
+        if: always()
+        run: |
+          echo "## Cobertura del servicio" >> "$GITHUB_STEP_SUMMARY"
+          coverage report --format=markdown >> "$GITHUB_STEP_SUMMARY"
+
+  dashboard:
+    name: Dashboard (compilación)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci
+      - run: npm run build
+
+  secretos:
+    name: Búsqueda de secretos
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

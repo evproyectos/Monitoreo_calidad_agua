@@ -1,0 +1,6 @@
+# pruebas unitarias, cobertura y estilo (lo mismo que corre el CI)
+-r requirements.txt
+pytest>=8
+pytest-cov>=5
+httpx
+flake8>=7

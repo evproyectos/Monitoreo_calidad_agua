@@ -1,0 +1,4 @@
+# Estilo PEP 8 (RNF-007), con líneas de hasta 120 caracteres en vez de 79.
+[flake8]
+max-line-length = 120
+exclude = .git,venv,.venv,__pycache__
