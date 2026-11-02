@@ -28,6 +28,7 @@ backend/
     ejecutar.py        motor en vivo conectado a la API de datos, solo en consola
     verificar.py       comprueba que el motor en vivo da lo mismo que los notebooks
     prediccion.py      POST /predict/contaminacion: predicción con lecturas que manda el cliente
+    seguridad.py       clave de API, registro de accesos rechazados y HTTPS (TLS 1.2 o más)
     probar_prediccion.py  prueba de ese endpoint: latencia p95, errores 422 y mismos números
   pruebas/             pruebas unitarias del servicio (pytest)
   requirements.txt
@@ -41,7 +42,9 @@ frontend/              dashboard en React (Vite + Recharts)
     api.js             consultas periódicas al backend
     formato.js         etiquetas, norma, tolerancias, formato de números y fechas
     estilos.css        colores (modo claro y oscuro), tipografía y diseño
-registros/             CSV de cada sesión del motor (no se versiona)
+registros/             CSV de cada sesión del motor y accesos rechazados (no se versiona)
+.env.ejemplo          variables de configuración y secretos; se copia como .env (no se versiona)
+secretos/             certificado de HTTPS (no se versiona)
 ```
 
 ## Instalación
@@ -159,33 +162,57 @@ Configuración, una sola vez:
 
 1. En Telegram, escribirle a **@BotFather** `/newbot` y seguir los pasos: da el *token* del bot.
 2. Abrir el chat con el bot nuevo y mandarle cualquier mensaje.
-3. En PowerShell, guardar el token como variable de entorno del usuario (no va en el código ni
-   en git) y sacar el *chat id*:
+3. Poner el token en `TELEGRAM_TOKEN` del archivo `.env` (ver **Seguridad**; no va en el código
+   ni en git) y sacar el *chat id*. Desde `backend/`, con el venv activado:
 
    ```
-   setx TELEGRAM_TOKEN "el-token-del-bot"
-   # abrir una terminal nueva para que tome la variable; desde backend/, con el venv activado:
    python -m monitoreo.alertas --chat-id
-   setx TELEGRAM_CHAT_ID "el-chat-id"
-   # otra terminal nueva:
+   # poner el número en TELEGRAM_CHAT_ID del .env y probar:
    python -m monitoreo.alertas --prueba
    ```
 
 Al arrancar, el servicio dice en la consola qué canal usa (`Alertas: telegram`) y `/api/estado`
 informa cuántas alertas se enviaron y el último error, si hubo.
 
-Opciones (variables de entorno): `ALERTAS_RIESGO=0` para no avisar del riesgo en 24 h,
+Opciones (en el `.env`): `ALERTAS_RIESGO=0` para no avisar del riesgo en 24 h,
 `ALERTAS_RESUMEN_HORA` para la hora del resumen diario (7 por defecto; `-1` para no mandarlo),
 `URL_DASHBOARD` para el enlace de los mensajes y `TELEGRAM_CHAT_ID` con varios chats separados
 por coma para avisar a más de una persona. Las horas son las de los datos: con el emisor en
 tiempo real coinciden con el reloj; con el emisor acelerado llegan muchos mensajes seguidos.
+
+### Seguridad
+
+Los secretos y la configuración local van en un archivo **`.env`** en la raíz del proyecto, que
+no se versiona. Para crearlo, copiar `.env.ejemplo` como `.env` y completar los valores. Las
+variables definidas en el sistema (por ejemplo con `setx`) tienen prioridad sobre las del `.env`.
+
+- **Clave de API.** `POST /predict/contaminacion` pide una de las claves de `CLAVES_API` en el
+  encabezado `X-API-Key`. Sin clave o con una equivocada responde 401 y anota el intento (fecha,
+  origen, ruta y motivo, nunca la clave) en `registros/accesos_rechazados.log`. Sin ninguna clave
+  configurada responde 503, para que no quede abierto por olvido. En `/docs`, el botón
+  **Authorize** permite probarlo con la clave. El dashboard (`/`, `/api/...`) y `/health` no la
+  piden: son de solo lectura y los usa el navegador.
+- **HTTPS.** Con `CERTIFICADO_TLS` y `CLAVE_TLS` el servicio atiende solo por HTTPS, con TLS 1.2
+  como versión mínima. Para usarlo en la propia máquina hay un certificado de prueba.
+- **Secretos en el repositorio.** El CI busca secretos en todo el historial con gitleaks.
+
+Desde `backend/`:
+
+```
+python -m monitoreo.seguridad --nueva-clave     # clave para CLAVES_API
+python -m monitoreo.seguridad --certificado     # certificado para 127.0.0.1 en secretos/
+```
+
+El certificado de prueba es autofirmado: el navegador avisa que no lo reconoce hasta que se
+marca como confiable (el comando dice cómo). Para un servidor real se usa un certificado de una
+autoridad reconocida, que se configurará con Docker.
 
 ### API del servicio (puerto 8001)
 
 | Ruta | Qué devuelve |
 |---|---|
 | `GET /health` | si el servicio está en pie (`ok` o `degradado` con el motivo), versión y huella de los modelos cargados |
-| `POST /predict/contaminacion` | con las lecturas de 15 min de toda la red de las últimas 98 h (mismo formato que `POST /lecturas` de la API de datos): probabilidad de evento, tipo sugerido, pronóstico a 24 h y nivel verde, amarillo o rojo por sensor y para la red. 422 con el detalle si faltan columnas, lecturas o datos. El nivel amarillo empieza en `UMBRAL_AMARILLO` (0,5 por defecto) |
+| `POST /predict/contaminacion` | requiere `X-API-Key`. Con las lecturas de 15 min de toda la red de las últimas 98 h (mismo formato que `POST /lecturas` de la API de datos): probabilidad de evento, tipo sugerido, pronóstico a 24 h y nivel verde, amarillo o rojo por sensor y para la red. 422 con el detalle si faltan columnas, lecturas o datos. El nivel amarillo empieza en `UMBRAL_AMARILLO` (0,5 por defecto) |
 | `GET /api/estado` | hora de los datos, conexión, alarma activa, modo de pronóstico, estado de las alertas |
 | `GET /api/sensores` | estado actual de los 21 sensores: observado, pronóstico a 24 h, probabilidad de evento |
 | `GET /api/sensores/{nodo}/serie?horas=72` | serie horaria para graficar (observado, pronóstico, probabilidad) |
