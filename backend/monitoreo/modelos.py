@@ -49,6 +49,9 @@ class Modelos:
         self.arboles = p["arboles"]
         self.columnas = p["columnas"]
         self.tipicos = p["tipicos"]
+        # orden de los sensores en el entrenamiento (de la fuente al extremo de la red): las variables
+        # dependen de él, así que la predicción a pedido ordena las columnas igual
+        self.orden_sensores = list(dict.fromkeys(n for _, n in self.tipicos))
         self.normalizacion = p["normalizacion"]
         if "anio_sin" in self.columnas or "pronostico_lluvia" not in p:
             raise RuntimeError(

@@ -6,6 +6,7 @@ datos, pasa las lecturas al motor y procesa cada hora cerrada. Los endpoints sol
 del motor.
 
   GET /health                           si el servicio está en pie, versión y modelos cargados
+  POST /predict/contaminacion           predicción a pedido con lecturas que manda el cliente (422 si faltan datos)
   GET /api/estado                       hora simulada, conexión, alarma activa, modo de pronóstico
   GET /api/sensores                     estado actual de los 21 sensores (observado, pronóstico, detector)
   GET /api/sensores/{nodo}/serie?horas= serie horaria para graficar (observado, pronóstico, prob. de evento)
@@ -22,14 +23,15 @@ import threading
 import time
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from calidad_agua import calidad, metas
 
-from monitoreo import __version__
+from monitoreo import __version__, prediccion
 from monitoreo.alertas import Alertas
 from monitoreo.cliente_datos import ClienteDatos
 from monitoreo.config import Config, RAIZ
@@ -98,6 +100,23 @@ def crear_app(cfg=None):
     app.add_middleware(CORSMiddleware, allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
                        allow_methods=["GET"], allow_headers=["*"])
 
+    # errores de validación en español y con la ubicación del campo (RF-003.1, RNF-010)
+    MENSAJES = {"missing": "falta este campo", "float_parsing": "debe ser un número o null",
+                "float_type": "debe ser un número o null", "datetime_from_date_parsing": "no es una fecha válida",
+                "datetime_parsing": "no es una fecha válida", "datetime_type": "no es una fecha válida",
+                "list_type": "debe ser una lista", "dict_type": "debe ser un objeto",
+                "too_short": "no puede estar vacío", "json_invalid": "el cuerpo no es JSON válido",
+                "model_attributes_type": "debe ser un objeto JSON", "string_type": "debe ser texto"}
+
+    @app.exception_handler(RequestValidationError)
+    async def error_validacion(_req: Request, exc: RequestValidationError):
+        detalles = []
+        for e in exc.errors()[:20]:
+            donde = ".".join(str(x) for x in e.get("loc", ()) if x != "body") or "cuerpo"
+            detalles.append(f"{donde}: {MENSAJES.get(e.get('type'), e.get('msg'))}")
+        return JSONResponse(status_code=422, content={"detail": {
+            "error": "La solicitud no tiene el formato esperado.", "detalles": detalles}})
+
     def servicio():
         if "s" not in estado:
             raise HTTPException(503, "El servicio todavía está cargando los modelos")
@@ -130,6 +149,22 @@ def crear_app(cfg=None):
                 "conectado_a_datos": s.conectado,
                 "ultima_hora_procesada": e["ultima_hora_procesada"],
                 "alertas": s.alertas.canal.nombre}
+
+    @app.post("/predict/contaminacion", responses={422: {"description": "Faltan datos o no tienen el formato esperado"}})
+    def predecir_contaminacion(solicitud: prediccion.SolicitudContaminacion):
+        """
+        Probabilidad de evento de contaminación por sensor para la última hora cerrada, pronóstico a
+        24 h de cloro, turbidez y pH, y nivel de riesgo (verde, amarillo, rojo). Recibe las lecturas
+        de 15 min de toda la red de al menos las últimas 98 h, en el formato que los sensores le
+        mandan a la API de datos. Responde 422 con el detalle si faltan columnas, lecturas o datos.
+        """
+        s = servicio()
+        try:
+            r = prediccion.predecir(solicitud, s.motor.modelos, cfg.historia_h, cfg.umbral_amarillo, s.candado)
+        except prediccion.ErrorEntrada as e:
+            raise HTTPException(422, {"error": e.error, "detalles": e.detalles})
+        prediccion.guardar(s.motor.carpeta_sesion, r)
+        return r
 
     @app.get("/api/estado")
     def ver_estado():

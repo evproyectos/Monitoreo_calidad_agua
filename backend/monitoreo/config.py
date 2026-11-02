@@ -34,6 +34,9 @@ class Config:
     horas_para_cerrar: int = 2
     # cada cuántos segundos se consulta la API de datos
     intervalo_consulta_s: float = 1.0
+    # POST /predict/contaminacion: probabilidad desde la que un sensor pasa a nivel amarillo
+    # (rojo = umbral del detector). Pendiente de calibrar con la ASADA.
+    umbral_amarillo: float = field(default_factory=lambda: float(os.environ.get("UMBRAL_AMARILLO", "0.5")))
 
     def __post_init__(self):
         if self.modo_pronostico not in ("combinado", "arboles"):

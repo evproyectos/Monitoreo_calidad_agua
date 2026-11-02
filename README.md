@@ -27,6 +27,8 @@ backend/
     servicio.py        API del servicio (FastAPI, puerto 8001) que además sirve el dashboard
     ejecutar.py        motor en vivo conectado a la API de datos, solo en consola
     verificar.py       comprueba que el motor en vivo da lo mismo que los notebooks
+    prediccion.py      POST /predict/contaminacion: predicción con lecturas que manda el cliente
+    probar_prediccion.py  prueba de ese endpoint: latencia p95, errores 422 y mismos números
   requirements.txt
 frontend/              dashboard en React (Vite + Recharts)
   src/
@@ -74,6 +76,16 @@ métricas (acierto del notebook 08, eventos detectados y falsas alarmas del note
 ```
 python -m monitoreo.verificar              # periodo de prueba completo (~5 min)
 python -m monitoreo.verificar --dias 10    # más rápido
+```
+
+**Prueba de `POST /predict/contaminacion`** (con el servicio corriendo). Manda lecturas reales del
+periodo de prueba y mide la latencia (criterio: p95 ≤ 500 ms), revisa que las solicitudes
+incompletas respondan 422 con el detalle y, con `--comparar`, que los números sean los de los
+notebooks.
+
+```
+python -m monitoreo.probar_prediccion              # 100 solicitudes
+python -m monitoreo.probar_prediccion -n 300 --comparar
 ```
 
 **Dashboard.** Compilar el frontend una vez (y cada vez que se cambie), desde `frontend/`:
@@ -149,6 +161,7 @@ tiempo real coinciden con el reloj; con el emisor acelerado llegan muchos mensaj
 | Ruta | Qué devuelve |
 |---|---|
 | `GET /health` | si el servicio está en pie (`ok` o `degradado` con el motivo), versión y huella de los modelos cargados |
+| `POST /predict/contaminacion` | con las lecturas de 15 min de toda la red de las últimas 98 h (mismo formato que `POST /lecturas` de la API de datos): probabilidad de evento, tipo sugerido, pronóstico a 24 h y nivel verde, amarillo o rojo por sensor y para la red. 422 con el detalle si faltan columnas, lecturas o datos. El nivel amarillo empieza en `UMBRAL_AMARILLO` (0,5 por defecto) |
 | `GET /api/estado` | hora de los datos, conexión, alarma activa, modo de pronóstico, estado de las alertas |
 | `GET /api/sensores` | estado actual de los 21 sensores: observado, pronóstico a 24 h, probabilidad de evento |
 | `GET /api/sensores/{nodo}/serie?horas=72` | serie horaria para graficar (observado, pronóstico, probabilidad) |
