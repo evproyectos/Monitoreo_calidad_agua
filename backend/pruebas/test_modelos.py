@@ -98,3 +98,45 @@ def test_pronostico_y_deteccion_de_una_hora(carpeta):
     np.testing.assert_allclose(pron["CL2"], pron["arboles_CL2"])
     det = m.detectar(detector.horario(w), pd.DatetimeIndex([hora]))
     assert set(det["nodo"]) == set(SENSORES) and det["p_evento"].between(0, 1).all()
+
+
+@pytest.fixture(scope="module")
+def carpeta_con_anticipacion(tmp_path_factory, carpeta):
+    """Los mismos modelos más uno de anticipación como el del notebook 09 (árboles por tipo)."""
+    from calidad_agua import anticipacion
+    destino = tmp_path_factory.mktemp("modelos_anticipacion")
+    for f in carpeta.iterdir():
+        (destino / f.name).write_bytes(f.read_bytes())
+    w = calidad.lecturas_operativas(tabla_lecturas(24 * 6))
+    ha = anticipacion.horario(w)
+    T, tip = anticipacion.tabla(ha, pronostico=PronosticoConstante().ventanas(ha.index))
+    y = np.zeros(len(T), int)
+    y[40:60] = 3                                          # unas horas antes de una "turbidez"
+    joblib.dump({"nombre": "árboles", "modelo": anticipacion.entrenar_arboles(T, y), "columnas": list(T.columns),
+                 "tipicos": tip, "eleccion": {1: (0.6, 1), 2: (0.6, 1), 3: (0.5, 2), 4: (0.6, 1)},
+                 "retrasos_propagacion": pd.DataFrame({"mediana": [0.0, 2.0, 5.0]}, index=SENSORES),
+                 "mlflow": {"run_id": "def456"}}, destino / "anticipacion_24h.joblib")
+    return destino
+
+
+def test_anticipacion_opcional(carpeta, carpeta_con_anticipacion):
+    assert Modelos(carpeta, modo="arboles", pronostico=PronosticoConstante()).anticipacion is None
+    m = Modelos(carpeta_con_anticipacion, modo="arboles", pronostico=PronosticoConstante())
+    v = m.version["anticipacion"]
+    assert v["modelo"] == "árboles" and v["mlflow"]["run_id"] == "def456"
+    from calidad_agua import anticipacion
+    w = calidad.lecturas_operativas(tabla_lecturas(30))
+    horas = pd.DatetimeIndex([pd.Timestamp("2026-05-02 04:00"), pd.Timestamp("2026-05-02 05:00")])
+    P = m.anticipar(anticipacion.horario(w), horas)
+    assert list(P.columns) == anticipacion.CODIGOS and list(P.index) == list(horas)
+    assert (P[1] == 0).all() and P[3].between(0, 1).all()        # tipos sin ejemplos: 0
+
+
+def test_anticipacion_de_una_version_anterior(tmp_path, carpeta_con_anticipacion):
+    for f in carpeta_con_anticipacion.iterdir():
+        (tmp_path / f.name).write_bytes(f.read_bytes())
+    viejo = joblib.load(tmp_path / "anticipacion_24h.joblib")
+    del viejo["eleccion"]
+    joblib.dump(viejo, tmp_path / "anticipacion_24h.joblib")
+    with pytest.raises(RuntimeError, match="notebook 09"):
+        Modelos(tmp_path, modo="arboles", pronostico=PronosticoConstante())

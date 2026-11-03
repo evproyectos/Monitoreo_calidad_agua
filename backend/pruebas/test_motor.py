@@ -92,3 +92,36 @@ def test_consultas_para_el_dashboard(cfg):
     e = motor.estado()
     assert e["ultima_hora_procesada"] == str(hora(8)) and e["lecturas_recibidas"] == 40
     assert e["pronostico_lluvia"] == "pronóstico de prueba" and e["confirmar_h"] == 2
+
+
+def test_aviso_anticipado_se_abre_una_vez_y_se_cierra(tmp_path, cfg):
+    from monitoreo.motor import HORAS_FIN_AVISO
+    alto = {INICIO + pd.Timedelta(hours=k) for k in (6, 7, 8)}
+    modelos = ModelosFalsos(p_anticipa=lambda h, k: 0.8 if h in alto else 0.1, eleccion={3: (0.5, 2), 2: (0.6, 1)})
+    m = Motor(cfg, modelos, registrar=True)
+    novedades = []
+    for x in lecturas(10 + HORAS_FIN_AVISO):
+        m.recibir(x["fecha"], x["valores"])
+        novedades += m.procesar()
+    avisos = [n for n in novedades if n["evento"] == "aviso_anticipado"]
+    # tipo 3 confirma con 2 h (7:00); tipo 2 con 1 h (6:00)
+    assert [(n["tipo"], n["hora"]) for n in avisos] == [("falla_cloro", str(INICIO + pd.Timedelta(hours=6))),
+                                                        ("turbidez_fuente", str(INICIO + pd.Timedelta(hours=7)))]
+    assert len(m.lista_avisos()) == 2 and not m.avisos_abiertos          # ya se cerraron
+    r = m.resumen_anticipacion()
+    assert {t["tipo"] for t in r["tipos"]} == {"turbidez_fuente", "falla_cloro"}
+    assert not any(t["en_aviso"] for t in r["tipos"])
+    assert m.estado()["anticipacion"] and m.estado()["avisos_anticipados_activos"] == []
+    assert modelos.lluvia_mes is not None and len(m.lluvia_horaria) > 0
+    sesion = list((tmp_path / "registros").iterdir())[0]
+    reg = pd.read_csv(sesion / "anticipacion.csv")
+    assert set(reg["tipo"]) == {"turbidez_fuente", "falla_cloro"} and reg["en_aviso"].sum() == 5
+
+
+def test_sin_modelo_de_anticipacion_no_hay_avisos(cfg):
+    m = Motor(cfg, ModelosFalsos(), registrar=False)
+    for x in lecturas(8):
+        m.recibir(x["fecha"], x["valores"])
+        m.procesar()
+    assert m.lista_avisos() == [] and m.resumen_anticipacion() == {"hora": None, "tipos": []}
+    assert m.estado()["anticipacion"] is False

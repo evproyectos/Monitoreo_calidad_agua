@@ -6,6 +6,9 @@ Qué se avisa:
   - alarma cerrada: cuánto duró y qué sensores involucró;
   - riesgo en 24 h: un sensor cuyo pronóstico sale de la norma. Se avisa una vez por episodio
     (el episodio termina cuando el pronóstico vuelve a la norma durante HORAS_FIN_RIESGO horas);
+  - aviso anticipado: el modelo de anticipación (notebook 09) espera que empiece un evento en las
+    próximas 24 h; dice el tipo, la probabilidad, por qué (las señales de ese tipo) y, si el evento
+    empieza en la planta, en cuántas horas llegaría a cada sensor;
   - resumen diario, a la hora ALERTAS_RESUMEN_HORA de los datos.
 
 Las horas son las de los datos: con el emisor en tiempo real coinciden con el reloj.
@@ -16,6 +19,7 @@ Configuración (en el archivo .env o como variables de entorno; nunca en el cód
   TELEGRAM_TOKEN         token del bot (te lo da @BotFather)
   TELEGRAM_CHAT_ID       chat o chats que reciben las alertas, separados por coma
   ALERTAS_RIESGO         1 (por defecto) o 0: avisar del riesgo en 24 h
+  ALERTAS_ANTICIPACION   1 (por defecto) o 0: mandar los avisos anticipados
   ALERTAS_RESUMEN_HORA   hora del resumen diario (por defecto 7; -1 para no enviarlo)
   URL_DASHBOARD          enlace que va en los mensajes (por defecto http://127.0.0.1:8001)
 
@@ -41,6 +45,13 @@ TIPOS = {"contaminacion": "Contaminación", "falla_cloro": "Falla de cloración"
 NOMBRE = {"CL2": "cloro", "TURB": "turbidez", "PH": "pH"}
 UNIDAD = {"CL2": " mg/L", "TURB": " UNT", "PH": ""}
 HORAS_FIN_RIESGO = 6            # horas seguidas en norma para dar por terminado un episodio de riesgo
+# qué se ve antes de cada tipo de evento (lo que aprende el modelo de anticipación, notebook 09)
+SENALES = {"contaminacion": "lluvia fuerte reciente (suelo saturado) y horas de baja presión en la red",
+           "falla_cloro": "el cloro viene bajando en la salida de la planta",
+           "turbidez_fuente": "aguacero fuerte: la crecida llega a la toma horas después",
+           "falla_ph": "el pH viene desviándose en la salida de la planta",
+           "anomalia": "la operación se aparta de lo normal"}
+EMPIEZAN_EN_LA_FUENTE = {"falla_cloro", "turbidez_fuente", "falla_ph"}
 
 
 def _fecha(t):
@@ -50,6 +61,10 @@ def _fecha(t):
 
 def _num(x, dec=2):
     return "—" if x is None or x != x else f"{x:.{dec}f}".replace(".", ",")
+
+
+def _pct(x):
+    return "—" if x is None or x != x else f"{100 * x:.0f} %"
 
 
 def fuera_de_norma(par, valor):
@@ -118,6 +133,7 @@ class Alertas:
     def __init__(self, canal=None):
         self.canal = canal or canal_desde_entorno()
         self.con_riesgo = os.environ.get("ALERTAS_RIESGO", "1") != "0"
+        self.con_anticipacion = os.environ.get("ALERTAS_ANTICIPACION", "1") != "0"
         self.hora_resumen = int(os.environ.get("ALERTAS_RESUMEN_HORA", "7"))
         self.url = os.environ.get("URL_DASHBOARD", "http://127.0.0.1:8001").rstrip("/")
         self.riesgo = {}                    # (sensor, parámetro) -> horas seguidas en norma (episodio abierto)
@@ -164,8 +180,10 @@ class Alertas:
         for n in novedades:
             if n["evento"] == "alarma_abierta":
                 self.avisar(self._texto_abierta(motor, n, _valores(motor, n["hora"])))
-            else:
+            elif n["evento"] == "alarma_cerrada":
                 self.avisar(self._texto_cerrada(motor, n))
+            elif n["evento"] == "aviso_anticipado" and self.con_anticipacion:
+                self.avisar(self._texto_aviso(motor, n))
         if self.con_riesgo:
             self._revisar_riesgo(motor, sensores, ahora, horas_nuevas)
         if self.hora_resumen >= 0:
@@ -201,6 +219,22 @@ class Alertas:
         tipo = html.escape(TIPOS.get(a["tipo_sugerido"], a["tipo_sugerido"]))
         return (f"🟢 <b>Alarma #{a['id']} cerrada</b> · {tipo}\n"
                 f"De {_fecha(a['inicio'])} a {_fecha(a['fin'])} ({a['horas']} h) · sensores: {a['sensores']}")
+
+    def _texto_aviso(self, motor, n):
+        tipo = n["tipo"]
+        nombre = TIPOS.get(tipo, "Evento fuera de lo normal") if tipo != "anomalia" else "Operación fuera de lo normal"
+        lineas = [f"🟡 <b>Aviso anticipado: posible {html.escape(nombre.lower())} en las próximas 24 h</b>",
+                  f"{_fecha(n['hora'])} · probabilidad {_pct(n['probabilidad'])} (umbral {_pct(n['umbral'])})",
+                  f"Señal: {SENALES.get(tipo, SENALES['anomalia'])}."]
+        retrasos = (getattr(motor.modelos, "anticipacion", None) or {}).get("retrasos_propagacion")
+        if tipo in EMPIEZAN_EN_LA_FUENTE and retrasos is not None:
+            orden = retrasos["mediana"].dropna().sort_values()
+            partes = [f"{nodo} ~{horas:.0f} h" for nodo, horas in orden.items() if horas > 0]
+            if partes:
+                lineas.append("Si ocurre, empieza en la planta (J280) y llegaría a los sensores en: "
+                              + " · ".join(partes))
+        lineas.append(self.url)
+        return "\n".join(lineas)
 
     def _revisar_riesgo(self, motor, sensores, ahora, horas_nuevas=1):
         nuevos = []
@@ -241,6 +275,9 @@ class Alertas:
         lineas.append("Fuera de norma ahora: " + (", ".join(fuera) if fuera else "ninguno"))
         if self.con_riesgo:
             lineas.append("Con riesgo en 24 h: " + (", ".join(riesgo) if riesgo else "ninguno"))
+        if getattr(motor.modelos, "anticipacion", None) is not None:
+            activos = [TIPOS.get(a["tipo"], "anomalía").lower() for a in motor.avisos_abiertos.values()]
+            lineas.append("Avisos anticipados activos: " + (", ".join(activos) if activos else "ninguno"))
         lineas.append(self.url)
         return "\n".join(lineas)
 

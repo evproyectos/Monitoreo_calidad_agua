@@ -87,6 +87,7 @@ def test_endpoints_del_dashboard(cliente):
     assert alarmas[0]["sensores"] == "J10" and alarmas[0]["fin"] is None
     ref = cliente.get("/api/referencias").json()
     assert ref["norma"]["CL2"]["minimo"] == 0.3 and ref["confirmar_h"] == 2
+    assert cliente.get("/api/anticipacion").json() == {"disponible": False, "hora": None, "tipos": [], "avisos": []}
 
 
 def test_predict_contaminacion(cliente):

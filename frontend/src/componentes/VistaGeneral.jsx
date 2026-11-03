@@ -3,6 +3,7 @@ import { useConsulta } from "../api.js";
 import { PARAMETROS } from "../formato.js";
 import GraficoRed, { EXTREMOS, TEXTO_EXTREMO, resumenRed } from "./GraficoRed.jsx";
 import MapaCalor from "./MapaCalor.jsx";
+import Anticipacion from "./Anticipacion.jsx";
 import { estadoSensor, TEXTO_ESTADO, COLOR_ESTADO } from "./RedSensores.jsx";
 
 const HORAS = 72;
@@ -20,6 +21,7 @@ export default function VistaGeneral({ sensores, referencias, onAbrir }) {
 
   return (
     <section className="general" aria-label="Vista general de la red">
+      <Anticipacion />
       <div className="panel">
         <div className="general-cabeza">
           <p className="resumen" aria-label="Sensores por estado">

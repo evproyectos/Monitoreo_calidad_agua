@@ -168,3 +168,27 @@ def test_llamadas_sin_horas_nuevas_no_cuentan_para_cerrar_el_riesgo(cfg, al):
     for _ in range(30):                                    # 30 ciclos sin datos nuevos
         al.revisar(motor, motor.procesar())
     assert al.riesgo[("J20", "CL2")] == 1
+
+
+def test_aviso_anticipado_con_llegada_a_los_sensores(cfg, al):
+    alto = {hora(k) for k in (5, 6)}
+    motor = Motor(cfg, ModelosFalsos(p_anticipa=lambda h, k: 0.82 if h in alto else 0.1), registrar=False)
+    correr(motor, al, 9)
+    avisos = [t for t in al.textos if "Aviso anticipado" in t]
+    assert len(avisos) == 1
+    assert "posible turbidez en la fuente en las próximas 24 h" in avisos[0]
+    assert "probabilidad 82 % (umbral 50 %)" in avisos[0] and "aguacero" in avisos[0]
+    assert "J10 ~2 h · J20 ~9 h" in avisos[0] and "J280 ~0" not in avisos[0]
+
+
+def test_avisos_anticipados_se_pueden_apagar(cfg, al, monkeypatch):
+    monkeypatch.setenv("ALERTAS_ANTICIPACION", "0")
+    a = alertas.Alertas(canal=CanalLista())
+    a.textos = []
+    a.avisar = a.textos.append
+    motor = Motor(cfg, ModelosFalsos(p_anticipa=lambda h, k: 0.9), registrar=False)
+    correr(motor, a, 8)
+    assert not [t for t in a.textos if "Aviso anticipado" in t]
+    a.hora_resumen = 10
+    correr(motor, a, 12)
+    assert "Avisos anticipados activos: turbidez en la fuente" in [t for t in a.textos if "Resumen" in t][0]

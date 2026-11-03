@@ -1,12 +1,13 @@
 # Monitoreo de calidad de agua
 
 Servicio en vivo para la red de 21 sensores: recibe las lecturas cada 15 minutos,
-pronostica cloro, turbidez y pH a 24 h, detecta eventos y abre alarmas.
+pronostica cloro, turbidez y pH a 24 h, **avisa antes** de que empiece un evento (próximas 24 h),
+detecta eventos y abre alarmas.
 
 ```
 API de datos de los sensores  ──►  backend (motor + modelos)  ──►  frontend (dashboard en React)
-(lecturas cada 15 min)             pronóstico, detector,           red de sensores, gráficos,
-                                   alarmas, API en :8001           alarmas
+(lecturas cada 15 min)             pronóstico, anticipación,       red de sensores, gráficos,
+                                   detector, alarmas, API :8001    avisos, alarmas
 ```
 
 Los modelos y el código de las variables vienen del proyecto **Modelo_calidad_agua**,
@@ -23,7 +24,7 @@ backend/
     pronostico_lluvia.py  pronóstico de lluvia que necesitan los modelos (archivo u Open-Meteo)
     motor.py           recibe lecturas, procesa cada hora cerrada, maneja las alarmas
     cliente_datos.py   consulta la API de datos
-    alertas.py         avisos por Telegram (alarmas, riesgo en 24 h, resumen diario)
+    alertas.py         avisos por Telegram (alarmas, avisos anticipados, riesgo en 24 h, resumen diario)
     servicio.py        API del servicio (FastAPI, puerto 8001) que además sirve el dashboard
     ejecutar.py        motor en vivo conectado a la API de datos, solo en consola
     verificar.py       comprueba que el motor en vivo da lo mismo que los notebooks
@@ -37,8 +38,8 @@ backend/
 frontend/              dashboard en React (Vite + Recharts)
   src/
     App.jsx            página y navegación entre las dos vistas (#/general y #/sensor/J224)
-    componentes/       Encabezado, VistaGeneral, GraficoRed, MapaCalor, RedSensores,
-                       DetalleSensor, Graficos, Alarmas
+    componentes/       Encabezado, VistaGeneral, Anticipacion, GraficoRed, MapaCalor,
+                       RedSensores, DetalleSensor, Graficos, Alarmas
     api.js             consultas periódicas al backend
     formato.js         etiquetas, norma, tolerancias, formato de números y fechas
     estilos.css        colores (modo claro y oscuro), tipografía y diseño
@@ -59,7 +60,7 @@ pip install -e "..\..\Modelo_calidad_agua[red]"
 ```
 
 Los modelos se leen de `Modelo_calidad_agua/modelos/`, que se genera corriendo los
-notebooks 07 y 08 de ese proyecto. Para usar otra carpeta: variable de entorno
+notebooks 07, 08 y 09 de ese proyecto. Para usar otra carpeta: variable de entorno
 `CARPETA_MODELOS`. Si los modelos son de una versión anterior (sin pronóstico de lluvia), el
 servicio no arranca y pide volver a correr esos notebooks.
 
@@ -97,11 +98,13 @@ de modelos), compilación del dashboard y búsqueda de secretos en el historial 
 ## Uso
 
 **Verificación (sin API).** Reproduce el periodo de prueba a través del motor y
-compara con el cálculo de los notebooks: mismos pronósticos, mismas alarmas y mismas
-métricas (acierto del notebook 08, eventos detectados y falsas alarmas del notebook 07).
+compara con el cálculo de los notebooks: mismos pronósticos, mismas alarmas, mismos avisos
+anticipados y mismas métricas (acierto del notebook 08, eventos detectados y falsas alarmas del
+notebook 07, eventos anticipados del notebook 09). Antes de la prueba manda 31 días de lecturas,
+porque la anticipación usa la lluvia de los últimos 30 días.
 
 ```
-python -m monitoreo.verificar              # periodo de prueba completo (~5 min)
+python -m monitoreo.verificar              # periodo de prueba completo (~3 min)
 python -m monitoreo.verificar --dias 10    # más rápido
 ```
 
@@ -155,7 +158,9 @@ http://localhost:5173 (las llamadas a `/api` se redirigen al backend en el puert
 El servicio avisa por Telegram cuando se **abre** una alarma (tipo de evento sugerido, sensores y
 sus valores de cloro, turbidez y pH), cuando se **cierra** (duración y sensores), cuando el
 pronóstico de un sensor sale de la norma en las próximas 24 h (**riesgo**, una vez por
-episodio) y con un **resumen diario**. Sin Telegram configurado, las alertas solo se escriben en
+episodio), cuando el modelo de anticipación espera que **empiece un evento en las próximas 24 h**
+(**aviso anticipado**: tipo, probabilidad, la señal que lo explica y, si el evento empieza en la
+planta, en cuántas horas llegaría a cada sensor) y con un **resumen diario**. Sin Telegram configurado, las alertas solo se escriben en
 la consola del servicio.
 
 Configuración, una sola vez:
@@ -175,6 +180,7 @@ Al arrancar, el servicio dice en la consola qué canal usa (`Alertas: telegram`)
 informa cuántas alertas se enviaron y el último error, si hubo.
 
 Opciones (en el `.env`): `ALERTAS_RIESGO=0` para no avisar del riesgo en 24 h,
+`ALERTAS_ANTICIPACION=0` para no mandar los avisos anticipados,
 `ALERTAS_RESUMEN_HORA` para la hora del resumen diario (7 por defecto; `-1` para no mandarlo),
 `URL_DASHBOARD` para el enlace de los mensajes y `TELEGRAM_CHAT_ID` con varios chats separados
 por coma para avisar a más de una persona. Las horas son las de los datos: con el emisor en
@@ -218,6 +224,7 @@ autoridad reconocida, que se configurará con Docker.
 | `GET /api/sensores/{nodo}/serie?horas=72` | serie horaria para graficar (observado, pronóstico, probabilidad) |
 | `GET /api/red/series?horas=72` | series de los 21 sensores a la vez (vista general) |
 | `GET /api/alarmas` | alarmas de red, la más reciente primero |
+| `GET /api/anticipacion` | probabilidad de que empiece cada tipo de evento en las próximas 24 h, con su umbral, y los avisos anticipados (`disponible: false` si no hay modelo de anticipación) |
 | `GET /api/referencias` | norma, tolerancias de la meta y umbral del detector |
 
 ## Cómo funciona el motor
@@ -233,5 +240,10 @@ autoridad reconocida, que se configurará con Docker.
 - **Alarmas** (igual que en el notebook 07): un sensor entra en alarma si su probabilidad
   de evento supera el umbral 3 horas seguidas; la alarma de red se cierra tras 2 horas
   seguidas sin ningún sensor en alarma.
+- **Avisos anticipados** (igual que en el notebook 09): cada tipo de evento tiene su umbral y sus
+  horas de confirmación; un tipo entra en aviso cuando su probabilidad de empezar en las próximas
+  24 h supera el umbral esas horas seguidas, y el aviso termina tras 6 horas sin aviso. La lluvia
+  de 30 días (una de las variables) se guarda aparte, porque el búfer tiene solo 96 h. Si no está
+  `anticipacion_24h.joblib` en la carpeta de modelos, el servicio funciona igual sin avisos.
 - **Modo de pronóstico:** `combinado` (árboles para cloro, LSTM para turbidez, promedio
   para pH, como se eligió en el notebook 08) o `arboles` (sin TensorFlow).

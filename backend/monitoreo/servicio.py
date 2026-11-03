@@ -13,6 +13,7 @@ del motor.
   GET /api/sensores/{nodo}/serie?horas= serie horaria para graficar (observado, pronóstico, prob. de evento)
   GET /api/red/series?horas=48          series de los 21 sensores a la vez (vista general)
   GET /api/alarmas                      alarmas de red (la más reciente primero)
+  GET /api/anticipacion                 probabilidad de que empiece cada tipo de evento en 24 h y avisos
   GET /api/referencias                  norma, tolerancias de la meta y umbral del detector
   GET /                                 dashboard (React, compilado en frontend/dist)
 
@@ -234,6 +235,15 @@ def crear_app(cfg=None):
         s = servicio()
         with s.candado:
             return list(reversed(s.motor.lista_alarmas()))
+
+    @app.get("/api/anticipacion")
+    def ver_anticipacion():
+        s = servicio()
+        with s.candado:
+            if getattr(s.motor.modelos, "anticipacion", None) is None:
+                return {"disponible": False, "hora": None, "tipos": [], "avisos": []}
+            return {"disponible": True, **s.motor.resumen_anticipacion(),
+                    "avisos": list(reversed(s.motor.lista_avisos()))}
 
     @app.get("/api/referencias")
     def ver_referencias():

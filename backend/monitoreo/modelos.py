@@ -1,6 +1,7 @@
 """
-Carga de los modelos entrenados en el proyecto Modelo_calidad_agua (notebooks 07 y 08) y
-cálculo de pronósticos y probabilidades de evento a partir de tablas horarias.
+Carga de los modelos entrenados en el proyecto Modelo_calidad_agua (notebooks 07, 08 y 09) y
+cálculo de pronósticos, probabilidades de evento y probabilidades de que empiece un evento en las
+próximas 24 h (anticipación) a partir de tablas horarias.
 
 Las variables se arman con las MISMAS funciones del paquete calidad_agua que se usaron al
 entrenar; aquí solo se aplican los modelos. Los árboles del pronóstico usan además la lluvia
@@ -15,7 +16,7 @@ import numpy as np
 import pandas as pd
 import joblib
 
-from calidad_agua import variables, detector, red_neuronal as rn, modelo as arboles_
+from calidad_agua import anticipacion, variables, detector, red_neuronal as rn, modelo as arboles_
 from calidad_agua.red_neuronal import SALIDAS
 
 from monitoreo import pronostico_lluvia
@@ -77,6 +78,44 @@ class Modelos:
         self.umbral = d["umbral"]
         self.confirmar_h = d["confirmar_h"]
         self.sensores = list(d["sensores"])
+        self._cargar_anticipacion(carpeta)
+
+    # ------------------------------------------------------------------ anticipación (opcional)
+    def _cargar_anticipacion(self, carpeta):
+        """Modelo del notebook 09, si existe. Sin él, el servicio funciona igual pero no anticipa."""
+        ruta = os.path.join(carpeta, "anticipacion_24h.joblib")
+        self.anticipacion = None
+        if not os.path.exists(ruta):
+            return
+        a = joblib.load(ruta)
+        if "eleccion" not in a:
+            raise RuntimeError(f"El modelo de anticipación de {carpeta} es de una versión anterior. "
+                               "Vuelve a correr el notebook 09 del proyecto Modelo_calidad_agua.")
+        self.version["anticipacion"] = {**huella(ruta), "modelo": a["nombre"],
+                                        **({"mlflow": a["mlflow"]} if "mlflow" in a else {})}
+        if a["nombre"] == "LSTM":
+            import keras
+            a["redes_cargadas"] = [keras.models.load_model(os.path.join(carpeta, f"anticipacion_lstm_{k}.keras"),
+                                                           compile=False) for k in range(a["redes"])]
+        self.anticipacion = a
+
+    def anticipar(self, ha, horas, lluvia_mes=None):
+        """
+        Probabilidad de que empiece cada tipo de evento en las próximas 24 h, por hora de `horas`
+        (tabla horas × tipo; 0 = anomalía si el modelo es el Isolation Forest). `ha` es
+        anticipacion.horario; `lluvia_mes`, la lluvia de 30 días (anticipacion.lluvia_30d).
+        """
+        a = self.anticipacion
+        T, _ = anticipacion.tabla(ha, tipicos=a["tipicos"], pronostico=self.pronostico.ventanas(ha.index),
+                                  lluvia_mes=lluvia_mes)
+        T = T[a["columnas"]]
+        if a["nombre"] == "LSTM":
+            S = anticipacion.secuencias(((T - a["media"]) / a["desv"]).values, a["largo_h"])
+            pr = np.mean([r.predict(S, batch_size=2048, verbose=0) for r in a["redes_cargadas"]], axis=0)
+            P = pd.DataFrame(pr, index=T.index, columns=anticipacion.CODIGOS)
+        else:
+            P = anticipacion.probabilidades(a["modelo"], T)
+        return P.reindex(pd.DatetimeIndex(horas))
 
     # ------------------------------------------------------------------ pronóstico
     def pronosticar(self, h, horas):

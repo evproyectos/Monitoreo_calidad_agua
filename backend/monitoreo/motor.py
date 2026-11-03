@@ -8,7 +8,9 @@ Motor de monitoreo en vivo.
        - arma las variables con las mismas funciones del entrenamiento, sobre las últimas
          `historia_h` horas;
        - pronostica cloro, turbidez y pH a 24 h para cada sensor;
-       - calcula la probabilidad de evento de cada sensor y actualiza las alarmas.
+       - calcula la probabilidad de evento de cada sensor y actualiza las alarmas;
+       - si hay modelo de anticipación (notebook 09), calcula la probabilidad de que empiece
+         cada tipo de evento en las próximas 24 h y abre o cierra los avisos anticipados.
      Procesar varias horas juntas cuesta casi lo mismo que una, así que el motor no se queda
      atrás aunque los datos lleguen acelerados.
 
@@ -17,6 +19,10 @@ Alarmas (igual que en la evaluación del notebook 07):
     `confirmar_h` horas seguidas;
   - la alarma de RED se abre cuando algún sensor entra en alarma y se cierra cuando pasan
     `horas_para_cerrar` horas seguidas sin ningún sensor en alarma.
+
+Avisos anticipados (igual que en la evaluación del notebook 09): un tipo de evento entra en aviso
+si su probabilidad supera su umbral durante sus horas de confirmación seguidas. El aviso de ese
+tipo termina tras HORAS_FIN_AVISO horas seguidas sin aviso.
 """
 
 import csv
@@ -27,11 +33,15 @@ from collections import Counter
 import numpy as np
 import pandas as pd
 
-from calidad_agua import calidad, carga, variables, detector
+from calidad_agua import anticipacion, calidad, carga, variables, detector
 from calidad_agua.red_neuronal import SALIDAS
 
 from monitoreo.config import Config
 from monitoreo.modelos import Modelos
+
+
+HORAS_FIN_AVISO = 6            # horas seguidas sin aviso para dar por terminado un aviso anticipado
+DIAS_LLUVIA = 31               # historia de lluvia para la variable de 30 días de la anticipación
 
 
 class Registro:
@@ -68,6 +78,15 @@ class Motor:
         self.alarmas = []
         self._siguiente_id = 1
 
+        # estado de los avisos anticipados: por tipo, horas seguidas sobre el umbral y, si hay un
+        # aviso abierto, sus datos y las horas que lleva sin aviso
+        self.horas_alto_tipo = {}
+        self.avisos_abiertos = {}
+        self.avisos = []
+        self.ultima_anticipacion = {}
+        self.lluvia_horaria = pd.Series(dtype="float64")
+        self.anticipaciones = []                  # probabilidades por hora y tipo (DataFrames por lote)
+
         # resultados acumulados (para la API y la verificación)
         self.pronosticos = []                     # DataFrames por lote
         self.deteccion = []
@@ -84,6 +103,9 @@ class Motor:
                                     ["fecha", "nodo", "p_evento", "tipo", "en_alarma"])
             self.reg_alarmas = Registro(os.path.join(self.carpeta_sesion, "alarmas.csv"),
                                         ["id", "inicio", "fin", "horas", "sensores", "tipo_sugerido"])
+            if getattr(self.modelos, "anticipacion", None) is not None:
+                self.reg_ant = Registro(os.path.join(self.carpeta_sesion, "anticipacion.csv"),
+                                        ["fecha", "tipo", "probabilidad", "umbral", "en_aviso"])
 
     # ------------------------------------------------------------------ entrada
     def recibir(self, fecha, valores):
@@ -160,6 +182,9 @@ class Motor:
                     "tipo": carga.TIPOS_EVENTO.get(int(sub["tipo"].get(n, 0)), "?"),
                     "en_alarma": n in en_alarma} for n in self.sensores}
 
+        if getattr(self.modelos, "anticipacion", None) is not None:
+            novedades += self._anticipar(w15, horas, listas)
+
         self.pronosticos.append(pron)
         self.deteccion.append(det)
         self._actualizar_reciente(pron, det)
@@ -172,6 +197,78 @@ class Motor:
         limite = self.ultima_hora_procesada - pd.Timedelta(hours=self.cfg.historia_h + 2)
         self.bufer = self.bufer.loc[self.bufer.index > limite]
         return novedades
+
+    # ------------------------------------------------------------------ anticipación
+    def _anticipar(self, w15, horas, listas):
+        ha = anticipacion.horario(w15)
+        # lluvia de 30 días: el búfer guarda solo `historia_h` horas, así que la lluvia horaria se
+        # guarda aparte
+        lluvia = ha["lluvia_mm_h"].dropna()
+        self.lluvia_horaria = pd.concat([self.lluvia_horaria[~self.lluvia_horaria.index.isin(lluvia.index)],
+                                         lluvia]).sort_index()
+        corte = horas[-1] - pd.Timedelta(days=DIAS_LLUVIA)
+        self.lluvia_horaria = self.lluvia_horaria[self.lluvia_horaria.index > corte]
+        completa = self.lluvia_horaria.reindex(pd.date_range(self.lluvia_horaria.index.min(), horas[-1], freq="1h"))
+        P = self.modelos.anticipar(ha, horas, lluvia_mes=anticipacion.lluvia_30d(completa))
+        self.anticipaciones.append(P[P.index.isin(listas)])
+        eleccion = self.modelos.anticipacion["eleccion"]
+        novedades, filas = [], []
+        for hora in horas:
+            if hora not in listas:
+                continue
+            estado = {}
+            for k, (umbral, confirmar) in eleccion.items():
+                p = float(P.loc[hora, k]) if k in P else np.nan
+                alto = p == p and p >= umbral
+                self.horas_alto_tipo[k] = self.horas_alto_tipo.get(k, 0) + 1 if alto else 0
+                en_aviso = self.horas_alto_tipo[k] >= confirmar
+                estado[k] = {"probabilidad": p, "umbral": umbral, "en_aviso": en_aviso}
+                filas.append({"fecha": hora, "tipo": _nombre_tipo(k), "probabilidad": p, "umbral": umbral,
+                              "en_aviso": en_aviso})
+                novedades += self._actualizar_aviso(hora, k, p, umbral, en_aviso)
+            self.ultima_anticipacion = {"hora": hora, "tipos": estado}
+        if self.carpeta_sesion and filas:
+            self.reg_ant.escribir(filas)
+        return novedades
+
+    def _actualizar_aviso(self, hora, k, p, umbral, en_aviso):
+        a = self.avisos_abiertos.get(k)
+        if en_aviso:
+            if a is None:
+                a = self.avisos_abiertos[k] = {"id": len(self.avisos) + len(self.avisos_abiertos) + 1,
+                                               "tipo": _nombre_tipo(k), "inicio": hora, "fin": hora,
+                                               "probabilidad_maxima": p, "sin_aviso": 0}
+                return [{"evento": "aviso_anticipado", "id": a["id"], "tipo": a["tipo"], "codigo": k,
+                         "hora": str(hora), "probabilidad": p, "umbral": umbral}]
+            a.update(fin=hora, sin_aviso=0, probabilidad_maxima=max(a["probabilidad_maxima"], p))
+            return []
+        if a is not None:
+            a["sin_aviso"] += 1
+            if a["sin_aviso"] >= HORAS_FIN_AVISO:
+                self.avisos.append(self._aviso_json(a))
+                del self.avisos_abiertos[k]
+        return []
+
+    @staticmethod
+    def _aviso_json(a, abierto=False):
+        return {"id": a["id"], "tipo": a["tipo"], "inicio": str(a["inicio"]),
+                "fin": None if abierto else str(a["fin"]), "probabilidad_maxima": _num(a["probabilidad_maxima"], 3)}
+
+    def tabla_anticipacion(self):
+        """Probabilidad de que empiece cada tipo de evento en 24 h, por hora (solo horas listas)."""
+        return pd.concat(self.anticipaciones).sort_index() if self.anticipaciones else pd.DataFrame()
+
+    def lista_avisos(self):
+        return self.avisos + [self._aviso_json(a, abierto=True) for a in self.avisos_abiertos.values()]
+
+    def resumen_anticipacion(self):
+        """Probabilidad actual de cada tipo de evento en las próximas 24 h, con su umbral."""
+        u = self.ultima_anticipacion
+        if not u:
+            return {"hora": None, "tipos": []}
+        return {"hora": str(u["hora"]),
+                "tipos": [{"tipo": _nombre_tipo(k), "probabilidad": _num(e["probabilidad"], 3),
+                           "umbral": e["umbral"], "en_aviso": e["en_aviso"]} for k, e in u["tipos"].items()]}
 
     def _actualizar_alarma(self, hora, en_alarma, tipos):
         a = self.alarma_abierta
@@ -313,7 +410,13 @@ class Motor:
                 "modo_pronostico": self.modelos.modo, "umbral": self.modelos.umbral,
                 "pronostico_lluvia": self.modelos.pronostico.descripcion,
                 "error_pronostico_lluvia": getattr(self.modelos.pronostico, "error", None),
-                "confirmar_h": self.modelos.confirmar_h}
+                "confirmar_h": self.modelos.confirmar_h,
+                "anticipacion": getattr(self.modelos, "anticipacion", None) is not None,
+                "avisos_anticipados_activos": sorted(a["tipo"] for a in self.avisos_abiertos.values())}
+
+
+def _nombre_tipo(k):
+    return "anomalia" if k == 0 else carga.TIPOS_EVENTO.get(k, "?")
 
 
 def _num(x, dec=4):

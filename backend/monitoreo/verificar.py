@@ -8,7 +8,12 @@ lotes de los notebooks sobre la tabla completa:
   1. pronósticos: mismos valores en cada sensor y hora;
   2. detector: misma probabilidad de evento y mismas alarmas por sensor;
   3. métricas: acierto del pronóstico (notebook 08) y eventos detectados / falsas alarmas
-     (notebook 07).
+     (notebook 07);
+  4. anticipación (si está el modelo del notebook 09): misma probabilidad de cada tipo de evento
+     en las próximas 24 h, mismos avisos y eventos anticipados.
+
+Antes de la prueba se mandan `--precarga-dias` días (31 por defecto): la anticipación usa la lluvia
+de los últimos 30 días, y con menos historia esa variable no sería la misma que en el notebook.
 
 Uso (desde backend/):
   python -m monitoreo.verificar                 # periodo de prueba completo (~5 min)
@@ -22,7 +27,7 @@ import time
 import numpy as np
 import pandas as pd
 
-from calidad_agua import carga, calidad, metas, variables, detector
+from calidad_agua import anticipacion, carga, calidad, metas, variables, detector
 from calidad_agua.red_neuronal import SALIDAS
 
 from monitoreo.config import Config
@@ -41,7 +46,7 @@ def referencia_por_lotes(modelos, crudo, horas):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--dias", type=int, default=None, help="días de prueba a reproducir (por defecto todos)")
-    ap.add_argument("--precarga-dias", type=int, default=5)
+    ap.add_argument("--precarga-dias", type=int, default=31)
     ap.add_argument("--lote-h", type=int, default=24, help="cada cuántas horas simuladas se llama a procesar()")
     args = ap.parse_args()
 
@@ -133,8 +138,47 @@ def main():
           f"falsas alarmas: {r['falsas alarmas']} ({r['falsas por semana']:.2f} por semana)")
     print(f"   alarmas de red abiertas por el motor: {len(motor.lista_alarmas())}")
 
+    ok_ant = verificar_anticipacion(modelos, crudo, motor, INICIO_PRUEBA)
+
     print("\nRESULTADO:", "VERIFICACIÓN SUPERADA" if ok_pron and n_dif <= 0.001 * len(d) and distintas == 0
-          else "HAY DIFERENCIAS: revisar")
+          and ok_ant else "HAY DIFERENCIAS: revisar")
+
+
+def verificar_anticipacion(modelos, crudo, motor, inicio):
+    """Probabilidades en vivo contra el cálculo del notebook 09 sobre la tabla completa."""
+    a = modelos.anticipacion
+    if a is None:
+        print("\n4. Anticipación: no hay modelo (anticipacion_24h.joblib); se omite")
+        return True
+    print(f"\n4. Anticipación ({a['nombre']}, notebook 09)")
+    P_v = motor.tabla_anticipacion()
+    P_v = P_v[P_v.index >= inicio]
+    ha = anticipacion.horario(calidad.lecturas_operativas(crudo))
+    T, _ = anticipacion.tabla(ha, tipicos=a["tipicos"], pronostico=modelos.pronostico.ventanas(ha.index))
+    P_b = anticipacion.probabilidades(a["modelo"], T[a["columnas"]]).reindex(P_v.index)
+    dif = np.abs(P_v.values - P_b.values)
+    n_dif = int((dif > 1e-3).sum())
+    print(f"   probabilidad por tipo: {P_v.size:,} valores · diferencia máxima {np.nanmax(dif):.2e} · "
+          f"con más de 0,001: {n_dif}")
+    aviso_v, _ = anticipacion.avisos_por_tipo(P_v, a["eleccion"])
+    aviso_b, tipo_b = anticipacion.avisos_por_tipo(P_b, a["eleccion"])
+    distintos = int((aviso_v != aviso_b).sum())
+    print(f"   horas en aviso: {int(aviso_v.sum())} en vivo, {int(aviso_b.sum())} en el cálculo del notebook "
+          f"(distintas: {distintos})")
+    try:
+        cat = carga.catalogo_eventos()
+    except FileNotFoundError:
+        cat = None
+    if cat is not None:
+        obj = anticipacion.objetivo(ha.index, cat)
+        utiles = pd.Series(anticipacion.filas_utiles(ha, obj), index=ha.index).reindex(P_v.index).values
+        ev, _, r = anticipacion.evaluar(P_v.index, aviso_v, cat, utiles, P_v.index[0],
+                                        P_v.index[-1] + pd.Timedelta(hours=1), tipo=tipo_b)
+        con_causa = ev[ev["causa"] != "aleatoria"]
+        print(f"   eventos anticipados: {r['anticipados']} de {r['eventos']} (con causa: "
+              f"{int(con_causa['anticipado'].sum())} de {len(con_causa)}) · avisos falsos: {r['falsos']} "
+              f"({r['falsos_por_semana']:.2f} por semana) · avisos abiertos por el motor: {len(motor.lista_avisos())}")
+    return n_dif <= 0.001 * P_v.size and distintos == 0
 
 
 if __name__ == "__main__":

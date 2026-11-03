@@ -3,7 +3,7 @@
 import os
 from pathlib import Path
 
-__version__ = "1.1.0"
+__version__ = "1.2.0"
 
 # secretos y configuración local: archivo .env en la raíz del proyecto (no se versiona; ver
 # .env.ejemplo). Las variables ya definidas en el sistema tienen prioridad.

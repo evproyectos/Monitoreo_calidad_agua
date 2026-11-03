@@ -56,7 +56,7 @@ class ModelosFalsos:
       pronostico_24h[nodo][parametro] -> valor pronosticado (por defecto, el valor actual)
     """
 
-    def __init__(self, p_evento=None, pronostico_24h=None):
+    def __init__(self, p_evento=None, pronostico_24h=None, p_anticipa=None, eleccion=None):
         self.sensores = sorted(SENSORES)
         self.orden_sensores = list(SENSORES)
         self.umbral, self.confirmar_h, self.modo = 0.9, 2, "combinado"
@@ -67,6 +67,11 @@ class ModelosFalsos:
         self.version = {"pronostico": {"archivo": "pronostico.joblib", "sha256": "aaaaaaaaaaaa", "fecha": "2026-10-26"},
                         "detector": {"archivo": "detector.joblib", "sha256": "bbbbbbbbbbbb", "fecha": "2026-10-26"}}
         self.p_evento = p_evento or (lambda hora, nodo: 0.05)
+        # anticipación: p_anticipa(hora, tipo) -> probabilidad; sin ella, el servicio no anticipa
+        self.p_anticipa = p_anticipa
+        self.anticipacion = None if p_anticipa is None else {
+            "eleccion": eleccion or {3: (0.5, 1)},
+            "retrasos_propagacion": pd.DataFrame({"mediana": [0.0, 2.0, 9.0]}, index=SENSORES)}
         self.pronostico_24h = pronostico_24h or {}
         self.llamadas = 0
 
@@ -82,6 +87,11 @@ class ModelosFalsos:
                     fila[p] = self.pronostico_24h.get(n, {}).get(p, actual)
                 filas.append(fila)
         return pd.DataFrame(filas)
+
+    def anticipar(self, ha, horas, lluvia_mes=None):
+        self.lluvia_mes = lluvia_mes
+        tipos = list(self.anticipacion["eleccion"])
+        return pd.DataFrame({k: [self.p_anticipa(h, k) for h in horas] for k in tipos}, index=pd.DatetimeIndex(horas))
 
     def detectar(self, hd, horas):
         filas = [{"fecha": hora, "nodo": n, "p_evento": self.p_evento(hora, n), "tipo": 1}
