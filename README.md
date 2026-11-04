@@ -155,12 +155,16 @@ http://localhost:5173 (las llamadas a `/api` se redirigen al backend en el puert
 
 ### Alertas por Telegram
 
-El servicio avisa por Telegram cuando se **abre** una alarma (tipo de evento sugerido, sensores y
-sus valores de cloro, turbidez y pH), cuando se **cierra** (duración y sensores), cuando el
-pronóstico de un sensor sale de la norma en las próximas 24 h (**riesgo**, una vez por
-episodio), cuando el modelo de anticipación espera que **empiece un evento en las próximas 24 h**
+El servicio avisa por Telegram cuando se **abre** una alarma (tipo de evento sugerido, sensores con
+su probabilidad de evento y sus valores de cloro, turbidez y pH, a qué sensores todavía no llega si
+el evento empieza en la planta, y qué hacer), cuando se **cierra** (duración y sensores), cuando el
+pronóstico de un sensor sale de la norma en las próximas 24 h (**riesgo**, una vez por episodio,
+con qué hacer según el parámetro), cuando el modelo de anticipación espera que **empiece un evento en las próximas 24 h**
 (**aviso anticipado**: tipo, probabilidad, la señal que lo explica y, si el evento empieza en la
-planta, en cuántas horas llegaría a cada sensor) y con un **resumen diario**. Sin Telegram configurado, las alertas solo se escriben en
+planta, en cuántas horas llegaría a cada sensor, y qué revisar para evitarlo) y con un **resumen
+diario**. Las acciones recomendadas están en `ACCION_ALARMA`, `ACCION_AVISO` y `ACCION_RIESGO` de
+`backend/monitoreo/alertas.py`: son una guía general y la ASADA debe ajustarlas a sus
+procedimientos. Sin Telegram configurado, las alertas solo se escriben en
 la consola del servicio.
 
 Configuración, una sola vez:

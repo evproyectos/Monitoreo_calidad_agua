@@ -2,13 +2,15 @@
 Alertas del servicio de monitoreo (por ahora por Telegram).
 
 Qué se avisa:
-  - alarma abierta: tipo de evento sugerido, sensores y valores actuales de cloro, turbidez y pH;
+  - alarma abierta: tipo de evento sugerido, sensores con su probabilidad de evento y sus valores
+    de cloro, turbidez y pH, a qué sensores todavía no llega (si empieza en la planta) y qué hacer;
   - alarma cerrada: cuánto duró y qué sensores involucró;
-  - riesgo en 24 h: un sensor cuyo pronóstico sale de la norma. Se avisa una vez por episodio
-    (el episodio termina cuando el pronóstico vuelve a la norma durante HORAS_FIN_RIESGO horas);
+  - riesgo en 24 h: un sensor cuyo pronóstico sale de la norma, con qué hacer según el parámetro.
+    Se avisa una vez por episodio (el episodio termina cuando el pronóstico vuelve a la norma
+    durante HORAS_FIN_RIESGO horas);
   - aviso anticipado: el modelo de anticipación (notebook 09) espera que empiece un evento en las
     próximas 24 h; dice el tipo, la probabilidad, por qué (las señales de ese tipo) y, si el evento
-    empieza en la planta, en cuántas horas llegaría a cada sensor;
+    empieza en la planta, en cuántas horas llegaría a cada sensor, y qué revisar para evitarlo;
   - resumen diario, a la hora ALERTAS_RESUMEN_HORA de los datos.
 
 Las horas son las de los datos: con el emisor en tiempo real coinciden con el reloj.
@@ -35,6 +37,7 @@ import queue
 import threading
 import time
 
+import numpy as np
 import pandas as pd
 import requests
 
@@ -52,6 +55,35 @@ SENALES = {"contaminacion": "lluvia fuerte reciente (suelo saturado) y horas de 
            "falla_ph": "el pH viene desviándose en la salida de la planta",
            "anomalia": "la operación se aparta de lo normal"}
 EMPIEZAN_EN_LA_FUENTE = {"falla_cloro", "turbidez_fuente", "falla_ph"}
+# qué hacer: cuando el evento ya se ve (alarma) y cuando se espera (aviso anticipado). Son una guía
+# general para el operador; la ASADA debe ajustarlas a sus procedimientos.
+ACCION_ALARMA = {
+    "contaminacion": "tomar muestras en los sensores en alarma para confirmar; si se confirma, aislar el "
+                     "sector, avisar a los abonados y buscar fugas o trabajos recientes en la zona",
+    "falla_cloro": "revisar de inmediato la dosificación de cloro en la planta (bomba dosificadora, tanque "
+                   "de hipoclorito y línea) y reponer la dosis",
+    "turbidez_fuente": "revisar la planta (coagulación y filtros): ajustar la dosis de coagulante y, si la "
+                       "turbidez sigue sobre 5 UNT, valorar suspender la toma",
+    "falla_ph": "revisar el ajuste de pH en la planta (dosificación de químicos)",
+    "?": "revisar las lecturas de los sensores en alarma y confirmar en campo",
+}
+ACCION_AVISO = {
+    "contaminacion": "evitar maniobras que bajen la presión, revisar fugas conocidas y estar listo para "
+                     "muestrear las zonas de baja presión",
+    "falla_cloro": "revisar la bomba dosificadora y el nivel del tanque de hipoclorito antes de que la "
+                   "dosis caiga más",
+    "turbidez_fuente": "preparar la planta para la crecida: revisar la dosis de coagulante y los filtros y "
+                       "vigilar la turbidez del agua cruda",
+    "falla_ph": "revisar la dosificación de químicos de pH antes de que la deriva siga",
+    "anomalia": "revisar las lecturas de la red y de la planta",
+}
+ACCION_RIESGO = {
+    ("CL2", "mínimo"): "revisar la dosis de cloro en la planta o la recloración en el tanque que abastece el sector",
+    ("CL2", "máximo"): "bajar la dosis de cloro en la planta",
+    ("TURB", "máximo"): "revisar la planta (coagulación y filtros) y el agua cruda",
+    ("PH", "mínimo"): "revisar el ajuste de pH en la planta",
+    ("PH", "máximo"): "revisar el ajuste de pH en la planta",
+}
 
 
 def _fecha(t):
@@ -87,10 +119,36 @@ def _valores(motor, hora):
     if p.empty:
         return {}
     p = p[p["fecha"] == pd.Timestamp(hora)].set_index("nodo")
+    d = getattr(motor, "reciente_det", pd.DataFrame())
+    prob = d[d["fecha"] == pd.Timestamp(hora)].set_index("nodo")["p_evento"] if not d.empty else pd.Series(dtype=float)
     tip = motor.modelos.tipicos
     return {n: {**{par: (None if pd.isna(fila[f"base_{par}"]) else float(fila[f"base_{par}"]))
-                   for par in ["CL2", "TURB", "PH"]}, "cloro_tipico": float(tip[("CL2", n)])}
+                   for par in ["CL2", "TURB", "PH"]}, "cloro_tipico": float(tip[("CL2", n)]),
+                "p_evento": None if pd.isna(prob.get(n, np.nan)) else float(prob.get(n))}
             for n, fila in p.iterrows()}
+
+
+def _por_horas(llegadas, max_sensores=6):
+    """[(nodo, horas)] -> '~1 h: J439 · ~2 h: J224, J69 y 8 más · ~15 h: J144'."""
+    grupos = {}
+    for nodo, h in llegadas:
+        grupos.setdefault(int(round(h)), []).append(nodo)
+    partes = []
+    for h, nodos in sorted(grupos.items()):
+        resto = f" y {len(nodos) - max_sensores} más" if len(nodos) > max_sensores else ""
+        txt = ", ".join(nodos[:max_sensores]) + resto
+        partes.append(f"~{h} h: {txt}")
+    return " · ".join(partes)
+
+
+def _llegada(motor, ya):
+    """Sensores a los que un evento de la planta todavía no llegó, con las horas típicas de llegada
+    contadas desde la salida de la planta (retrasos del notebook 09). Lista vacía si no hay datos."""
+    retrasos = (getattr(motor.modelos, "anticipacion", None) or {}).get("retrasos_propagacion")
+    if retrasos is None:
+        return []
+    orden = retrasos["mediana"].dropna().sort_values()
+    return [(nodo, horas) for nodo, horas in orden.items() if nodo not in ya and horas > 0]
 
 
 # ---------------------------------------------------------------------------- canales
@@ -203,13 +261,24 @@ class Alertas:
         plural = "es" if len(n["sensores"]) > 1 else ""
         lineas = [f"🔴 <b>Alarma #{n['id']}: {html.escape(tipo_txt)}</b> (tipo sugerido)",
                   f"{_fecha(n['hora'])} · {len(n['sensores'])} sensor{plural} en alarma"]
-        for nodo in n["sensores"][:6]:
+        # primero los sensores con más probabilidad de evento
+        orden = sorted(n["sensores"], key=lambda x: (-(sensores.get(x, {}).get("p_evento") or 0), x))
+        for nodo in orden[:6]:
             s = sensores.get(nodo, {})
             valores = " · ".join(f"{NOMBRE[p]} {_num(s.get(p))}{UNIDAD[p]}" for p in ["CL2", "TURB", "PH"])
-            lineas.append(f"• <b>{nodo}</b>: {valores} (cloro típico {_num(s.get('cloro_tipico'))})")
+            lineas.append(f"• <b>{nodo}</b> ({_pct(s.get('p_evento'))}): {valores} "
+                          f"(cloro típico {_num(s.get('cloro_tipico'))})")
         if len(n["sensores"]) > 6:
             lineas.append(f"• y {len(n['sensores']) - 6} sensores más")
-        lineas.append(f"{self.url}/#/sensor/{n['sensores'][0]}")
+        if tipo in EMPIEZAN_EN_LA_FUENTE:
+            faltan = _llegada(motor, set(n["sensores"]))
+            if faltan:
+                lineas.append("Empieza en la planta; todavía no llega a (horas típicas desde la salida de la "
+                              "planta): " + _por_horas(faltan))
+        elif tipo == "contaminacion":
+            lineas.append("Evento local: afecta el agua que pasa por esos sensores.")
+        lineas.append(f"<b>Qué hacer:</b> {ACCION_ALARMA.get(tipo, ACCION_ALARMA['?'])}.")
+        lineas.append(f"{self.url}/#/sensor/{orden[0]}")
         return "\n".join(lineas)
 
     def _texto_cerrada(self, motor, n):
@@ -226,13 +295,11 @@ class Alertas:
         lineas = [f"🟡 <b>Aviso anticipado: posible {html.escape(nombre.lower())} en las próximas 24 h</b>",
                   f"{_fecha(n['hora'])} · probabilidad {_pct(n['probabilidad'])} (umbral {_pct(n['umbral'])})",
                   f"Señal: {SENALES.get(tipo, SENALES['anomalia'])}."]
-        retrasos = (getattr(motor.modelos, "anticipacion", None) or {}).get("retrasos_propagacion")
-        if tipo in EMPIEZAN_EN_LA_FUENTE and retrasos is not None:
-            orden = retrasos["mediana"].dropna().sort_values()
-            partes = [f"{nodo} ~{horas:.0f} h" for nodo, horas in orden.items() if horas > 0]
-            if partes:
-                lineas.append("Si ocurre, empieza en la planta (J280) y llegaría a los sensores en: "
-                              + " · ".join(partes))
+        llegadas = _llegada(motor, set()) if tipo in EMPIEZAN_EN_LA_FUENTE else []
+        if llegadas:
+            lineas.append("Si ocurre, empieza en la planta (J280) y llegaría a los sensores en: "
+                          + _por_horas(llegadas))
+        lineas.append(f"<b>Qué hacer:</b> {ACCION_AVISO.get(tipo, ACCION_AVISO['anomalia'])}.")
         lineas.append(self.url)
         return "\n".join(lineas)
 
@@ -257,6 +324,8 @@ class Alertas:
                 lineas.append(f"• <b>{nodo}</b>: {NOMBRE[par]} {_num(v)}{UNIDAD[par]} ({limite})")
             if len(nuevos) > 10:
                 lineas.append(f"• y {len(nuevos) - 10} más")
+            acciones = dict.fromkeys(ACCION_RIESGO[(par, limite.split()[0])] for _, par, _, limite in nuevos)
+            lineas.append("<b>Qué hacer:</b> " + "; ".join(acciones) + ".")
             lineas.append(self.url)
             self.avisar("\n".join(lineas))
 

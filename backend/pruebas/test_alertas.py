@@ -45,6 +45,12 @@ def al(monkeypatch):
     return a
 
 
+def test_llegadas_agrupadas_por_hora():
+    ll = [("J439", 1.0), ("J224", 2.0), ("J69", 2.0), ("J1", 2.4), ("J144", 15.0)]
+    assert alertas._por_horas(ll) == "~1 h: J439 · ~2 h: J224, J69, J1 · ~15 h: J144"
+    assert alertas._por_horas(ll, max_sensores=2) == "~1 h: J439 · ~2 h: J224, J69 y 1 más · ~15 h: J144"
+
+
 def test_formatos_de_fecha_numero_y_norma():
     assert alertas._fecha("2026-09-02 11:00:00") == "02/09/2026 11:00:00"
     assert alertas._num(0.456) == "0,46" and alertas._num(None) == "—" and alertas._num(float("nan")) == "—"
@@ -62,9 +68,35 @@ def test_mensajes_de_alarma_abierta_y_cerrada(cfg, al):
     correr(motor, al, 12)
     abierta = next(t for t in al.textos if "Alarma #1:" in t)
     assert "Contaminación" in abierta and "01/05/2026 06:00:00" in abierta
-    assert "<b>J10</b>: cloro" in abierta and "/#/sensor/J10" in abierta
+    assert "<b>J10</b> (95 %): cloro" in abierta and "/#/sensor/J10" in abierta
+    assert "Evento local" in abierta and "<b>Qué hacer:</b> tomar muestras" in abierta
     cerrada = next(t for t in al.textos if "cerrada" in t)
     assert "De 01/05/2026 06:00:00 a 01/05/2026 07:00:00 (2 h)" in cerrada
+
+
+def test_alarma_de_la_planta_dice_a_donde_no_ha_llegado(cfg, al):
+    alto = {hora(k) for k in (5, 6, 7)}
+    modelos = ModelosFalsos(p_evento=lambda h, n: 0.95 if (n == "J280" and h in alto) else 0.1,
+                            p_anticipa=lambda h, k: 0.1, tipo_evento=2)
+    motor = Motor(cfg, modelos, registrar=False)
+    correr(motor, al, 9)
+    abierta = next(t for t in al.textos if "Alarma #1:" in t)
+    assert "Falla de cloración" in abierta
+    # retrasos del modelo de anticipación: J10 a 2 h y J20 a 9 h de la planta (conftest)
+    linea = next(x for x in abierta.split("\n") if "todavía no llega" in x)
+    assert linea.endswith("planta): ~2 h: J10 · ~9 h: J20") and "J280" not in linea
+    assert abierta.endswith("/#/sensor/J280")                # enlace al sensor con más probabilidad
+    assert "<b>Qué hacer:</b> revisar de inmediato la dosificación de cloro" in abierta
+
+
+def test_alarma_sin_modelo_de_anticipacion_no_inventa_llegadas(cfg, al):
+    alto = {hora(k) for k in (5, 6, 7)}
+    motor = Motor(cfg, ModelosFalsos(p_evento=lambda h, n: 0.95 if (n == "J280" and h in alto) else 0.1,
+                                     tipo_evento=3), registrar=False)
+    correr(motor, al, 9)
+    abierta = next(t for t in al.textos if "Alarma #1:" in t)
+    assert "Turbidez en la fuente" in abierta and "todavía no llega" not in abierta
+    assert "<b>Qué hacer:</b> revisar la planta (coagulación y filtros)" in abierta
 
 
 def test_alarma_que_abre_y_cierra_en_el_mismo_ciclo(cfg, al):
@@ -83,6 +115,7 @@ def test_riesgo_en_24h_se_avisa_una_vez_por_episodio(cfg, al):
     correr(motor, al, 7)
     riesgo = [t for t in al.textos if "Riesgo en 24 h" in t]
     assert len(riesgo) == 1 and "<b>J20</b>: cloro 0,20 mg/L (mínimo 0,3)" in riesgo[0]
+    assert "<b>Qué hacer:</b> revisar la dosis de cloro en la planta o la recloración" in riesgo[0]
     modelos.pronostico_24h = {}                            # el pronóstico vuelve a la norma…
     correr(motor, al, 7 + alertas.HORAS_FIN_RIESGO)        # (las horas ya procesadas se ignoran)
     assert ("J20", "CL2") not in al.riesgo                 # …y el episodio termina
@@ -178,7 +211,8 @@ def test_aviso_anticipado_con_llegada_a_los_sensores(cfg, al):
     assert len(avisos) == 1
     assert "posible turbidez en la fuente en las próximas 24 h" in avisos[0]
     assert "probabilidad 82 % (umbral 50 %)" in avisos[0] and "aguacero" in avisos[0]
-    assert "J10 ~2 h · J20 ~9 h" in avisos[0] and "J280 ~0" not in avisos[0]
+    assert "~2 h: J10 · ~9 h: J20" in avisos[0] and "J280" not in avisos[0].split("llegaría")[1]
+    assert "<b>Qué hacer:</b> preparar la planta para la crecida" in avisos[0]
 
 
 def test_avisos_anticipados_se_pueden_apagar(cfg, al, monkeypatch):
