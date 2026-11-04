@@ -249,6 +249,10 @@ class Alertas:
                 self.avisar(self._texto_cerrada(motor, n))
             elif n["evento"] == "aviso_anticipado" and self.con_anticipacion:
                 self.avisar(self._texto_aviso(motor, n))
+            elif n["evento"] == "fuga_abierta":
+                self.avisar(self._texto_fuga(n))
+            elif n["evento"] == "fuga_cerrada":
+                self.avisar(self._texto_fuga_cerrada(motor, n))
         if self.con_riesgo:
             self._revisar_riesgo(motor, sensores, ahora, horas_nuevas)
         if self.hora_resumen >= 0:
@@ -287,6 +291,23 @@ class Alertas:
         lineas.append(f"<b>Qué hacer:</b> {ACCION_ALARMA.get(tipo, ACCION_ALARMA['?'])}.")
         lineas.append(f"{self.url}/#/sensor/{orden[0]}")
         return "\n".join(lineas)
+
+    def _texto_fuga(self, n):
+        lineas = [f"🔴 <b>Posible fuga #{n['id']}</b>",
+                  f"{_fecha(n['hora'])} · probabilidad {_pct(n['probabilidad'])} (umbral {_pct(n['umbral'])})",
+                  f"Tramo más probable: <b>{html.escape(str(n['tramo']))}</b> ({_pct(n['p_tramo'])})",
+                  f"La fuente entrega {_num(n['caudal_residuo'], 1)} L/s más de lo esperado a esta hora.",
+                  f"<b>Qué hacer:</b> {ACCION_ALARMA['fuga']}.",
+                  f"{self.url}/#/fugas"]
+        return "\n".join(lineas)
+
+    def _texto_fuga_cerrada(self, motor, n):
+        a = next((x for x in motor.fugas if x["id"] == n["id"]), None)
+        if a is None:
+            return f"🟢 <b>Fuga #{n['id']}: alarma cerrada</b> · {_fecha(n['hora'])}"
+        return (f"🟢 <b>Fuga #{a['id']}: alarma cerrada</b> · tramo {html.escape(str(a['tramo']))}\n"
+                f"De {_fecha(a['inicio'])} a {_fecha(a['fin'])} ({a['horas']} h) · hasta "
+                f"{_num(a['caudal_extra_Ls'], 1)} L/s de más")
 
     def _texto_cerrada(self, motor, n):
         a = next((x for x in motor.alarmas if x["id"] == n["id"]), None)

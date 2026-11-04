@@ -226,3 +226,15 @@ def test_avisos_anticipados_se_pueden_apagar(cfg, al, monkeypatch):
     a.hora_resumen = 10
     correr(motor, a, 12)
     assert "Avisos anticipados activos: turbidez en la fuente" in [t for t in a.textos if "Resumen" in t][0]
+
+
+def test_mensajes_de_fuga_con_tramo(cfg, al):
+    alto = {hora(k) for k in (5, 6, 7)}
+    motor = Motor(cfg, ModelosFalsos(p_fuga=lambda h: 0.9 if h in alto else 0.1, tramo="J10 – J20"), registrar=False)
+    correr(motor, al, 12)
+    abierta = next(t for t in al.textos if "Posible fuga #1" in t)
+    assert "01/05/2026 06:00:00" in abierta and "probabilidad 90 % (umbral 50 %)" in abierta
+    assert "<b>J10 – J20</b> (80 %)" in abierta and "3,6 L/s más" in abierta
+    assert "<b>Qué hacer:</b> recorrer el tramo" in abierta and "/#/fugas" in abierta
+    cerrada = next(t for t in al.textos if "Fuga #1: alarma cerrada" in t)
+    assert "tramo J10 – J20" in cerrada and "(2 h)" in cerrada

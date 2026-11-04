@@ -6,11 +6,13 @@ import DetalleSensor from "./componentes/DetalleSensor.jsx";
 import Alarmas from "./componentes/Alarmas.jsx";
 import VistaGeneral from "./componentes/VistaGeneral.jsx";
 
-// La vista vive en la dirección (#/general o #/sensor/J224): así funcionan el botón
-// de atrás del navegador y los enlaces directos a un sensor.
+// La vista vive en la dirección (#/general, #/fugas o #/sensor/J224): así funcionan el botón
+// de atrás del navegador y los enlaces directos a un sensor. #/fugas es la vista general (el
+// enlace de las alertas de fuga), que lleva al panel de fugas.
 function leerRuta() {
   const [, vista, nodo] = window.location.hash.replace(/^#\/?/, "/").split("/");
-  return vista === "sensor" ? { vista: "sensor", nodo: nodo || null } : { vista: "general", nodo: null };
+  if (vista === "sensor") return { vista: "sensor", nodo: nodo || null };
+  return { vista: "general", nodo: null, fugas: vista === "fugas" };
 }
 
 export default function App() {
@@ -33,10 +35,13 @@ export default function App() {
   // en la vista por sensor sin sensor elegido: el primero en alarma, el último visto o J224
   const nodo = ruta.vista === "sensor"
     ? (lista.some((s) => s.nodo === ruta.nodo) ? ruta.nodo
-      : (lista.find((s) => s.en_alarma) ?? lista.find((s) => s.nodo === ultimoSensor) ?? lista.find((s) => s.nodo === "J224") ?? lista[0])?.nodo)
+      : (lista.find((s) => s.en_alarma) ?? lista.find((s) => s.nodo === ultimoSensor) ?? lista[0])?.nodo)
     : null;
   useEffect(() => { if (nodo) setUltimoSensor(nodo); }, [nodo]);
   const sensor = lista.find((s) => s.nodo === nodo);
+  useEffect(() => {
+    if (ruta.fugas) document.getElementById("fugas")?.scrollIntoView({ behavior: "smooth" });
+  }, [ruta.fugas, lista.length]);
   const sinServicio = Boolean(estado.error) && !estado.datos;
 
   return (

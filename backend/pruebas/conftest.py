@@ -56,7 +56,8 @@ class ModelosFalsos:
       pronostico_24h[nodo][parametro] -> valor pronosticado (por defecto, el valor actual)
     """
 
-    def __init__(self, p_evento=None, pronostico_24h=None, p_anticipa=None, eleccion=None, tipo_evento=1):
+    def __init__(self, p_evento=None, pronostico_24h=None, p_anticipa=None, eleccion=None, tipo_evento=1,
+                 p_fuga=None, tramo="J280 – J10"):
         self.sensores = sorted(SENSORES)
         self.orden_sensores = list(SENSORES)
         self.umbral, self.confirmar_h, self.modo = 0.9, 2, "combinado"
@@ -75,6 +76,11 @@ class ModelosFalsos:
             "retrasos_propagacion": pd.DataFrame({"mediana": [0.0, 2.0, 9.0]}, index=SENSORES)}
         self.pronostico_24h = pronostico_24h or {}
         self.llamadas = 0
+        # fugas: p_fuga(hora) -> probabilidad; sin ella, el servicio no busca fugas
+        self.p_fuga, self.tramo = p_fuga, tramo
+        self.fugas = None if p_fuga is None else {
+            "nombre": "Random Forest", "umbral": 0.5, "confirmar_h": 2,
+            "tramos": {"A": "J280 – J10", "B": "J10 – J20"}}
 
     def pronosticar(self, h, horas):
         self.llamadas += 1
@@ -93,6 +99,11 @@ class ModelosFalsos:
         self.lluvia_mes = lluvia_mes
         tipos = list(self.anticipacion["eleccion"])
         return pd.DataFrame({k: [self.p_anticipa(h, k) for h in horas] for k in tipos}, index=pd.DatetimeIndex(horas))
+
+    def detectar_fugas(self, hd, horas):
+        assert "Q_R1" in hd and all(f"P_{n}" in hd for n in SENSORES)
+        return pd.DataFrame({"p_fuga": [self.p_fuga(h) for h in horas], "tramo": self.tramo, "p_tramo": 0.8,
+                             "caudal_residuo": [4.0 * self.p_fuga(h) for h in horas]}, index=pd.DatetimeIndex(horas))
 
     def detectar(self, hd, horas):
         filas = [{"fecha": hora, "nodo": n, "p_evento": self.p_evento(hora, n), "tipo": self.tipo_evento}

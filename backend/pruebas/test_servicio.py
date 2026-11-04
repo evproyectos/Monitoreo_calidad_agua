@@ -37,7 +37,8 @@ def esperar(cond, segundos=5):
 def cliente(tmp_path, monkeypatch):
     monkeypatch.delenv("TELEGRAM_TOKEN", raising=False)
     monkeypatch.setenv("CLAVES_API", f"otra-clave, {CLAVE}")
-    modelos = ModelosFalsos(p_evento=lambda h, n: 0.95 if n == "J10" and h >= INICIO + pd.Timedelta(hours=4) else 0.1)
+    modelos = ModelosFalsos(p_evento=lambda h, n: 0.95 if n == "J10" and h >= INICIO + pd.Timedelta(hours=4) else 0.1,
+                            p_fuga=lambda h: 0.8 if h >= INICIO + pd.Timedelta(hours=4) else 0.1)
     datos = []
     monkeypatch.setattr(srv, "Motor", lambda cfg: Motor(cfg, modelos, registrar=False))
     monkeypatch.setattr(srv, "ClienteDatos", lambda url: datos.append(DatosFalsos(url)) or datos[-1])
@@ -142,3 +143,19 @@ def test_cortes_de_conexion_no_llenan_la_consola_de_errores():
         assert vistos == ["otro error"]
     finally:
         loop.close()
+
+
+def test_fugas_en_el_dashboard_y_a_pedido(cliente):
+    f = cliente.get("/api/fugas").json()
+    assert f["disponible"] and f["hora"] == ULTIMA_HORA and f["actual"]["en_alarma"] is True
+    assert f["actual"]["tramo"] == "J280 – J10" and f["fugas"][0]["fin"] is None
+    assert f["tramos"] == ["J10 – J20", "J280 – J10"] and f["modelo"] == "Random Forest"
+    r = cliente.post("/predict/fugas", json={"lecturas": lecturas(7)})
+    assert r.status_code == 422 and "historia" in str(r.json())          # hacen falta 8 días
+    r = cliente.post("/predict/fugas", json={"lecturas": lecturas(200, inicio=INICIO - pd.Timedelta(hours=193))})
+    assert r.status_code == 200
+    d = r.json()
+    assert d["hora_evaluada"] == ULTIMA_HORA and d["nivel"] == "rojo" and d["alarma_confirmada"] is True
+    assert d["tramo"] == "J280 – J10" and d["caudal_extra_Ls"] == 3.2 and d["horas_sobre_umbral"] == 2
+    assert cliente.post("/predict/fugas", json={"lecturas": lecturas(2)}).status_code == 422
+    assert cliente.post("/predict/fugas", json={"lecturas": lecturas(7)}, headers={"X-API-Key": "x"}).status_code == 401

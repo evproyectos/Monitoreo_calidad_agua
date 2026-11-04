@@ -1,7 +1,7 @@
 """
-Carga de los modelos entrenados en el proyecto Modelo_calidad_agua (notebooks 07, 08 y 09) y
-cálculo de pronósticos, probabilidades de evento y probabilidades de que empiece un evento en las
-próximas 24 h (anticipación) a partir de tablas horarias.
+Carga de los modelos entrenados en el proyecto Modelo_calidad_agua (notebooks 07 a 10) y cálculo
+de pronósticos, probabilidades de evento, probabilidades de que empiece un evento en las próximas
+24 h (anticipación) y probabilidad de fuga con su tramo, a partir de tablas horarias.
 
 Las variables se arman con las MISMAS funciones del paquete calidad_agua que se usaron al
 entrenar; aquí solo se aplican los modelos. Los árboles del pronóstico usan además la lluvia
@@ -17,6 +17,7 @@ import pandas as pd
 import joblib
 
 from calidad_agua import anticipacion, variables, detector, red_neuronal as rn, modelo as arboles_
+from calidad_agua import fugas as fugas_
 from calidad_agua.red_neuronal import SALIDAS
 
 from monitoreo import pronostico_lluvia
@@ -79,6 +80,37 @@ class Modelos:
         self.confirmar_h = d["confirmar_h"]
         self.sensores = list(d["sensores"])
         self._cargar_anticipacion(carpeta)
+        self._cargar_fugas(carpeta)
+
+    # ------------------------------------------------------------------ fugas (opcional)
+    def _cargar_fugas(self, carpeta):
+        """Modelo del notebook 10, si existe. Sin él, el servicio funciona igual pero sin fugas."""
+        ruta = os.path.join(carpeta, "fugas.joblib")
+        self.fugas = None
+        if not os.path.exists(ruta):
+            return
+        f = joblib.load(ruta)
+        if isinstance(f["modelo"], fugas_.Autoencoder):
+            import keras
+            f["modelo"].red_ = keras.models.load_model(os.path.join(carpeta, "fugas_autoencoder.keras"),
+                                                       compile=False)
+        self.version["fugas"] = {**huella(ruta), "modelo": f["nombre"],
+                                 **({"mlflow": f["mlflow"]} if "mlflow" in f else {})}
+        self.fugas = f
+
+    def detectar_fugas(self, hd, horas):
+        """
+        Probabilidad de fuga en cada hora de `horas` y tramo más probable (entre qué dos sensores),
+        con su probabilidad. `hd` = detector.horario (trae caudal, presión, temperatura y lluvia).
+        """
+        f = self.fugas
+        X = fugas_.tabla(hd, f["normal"])[f["columnas"]]
+        p = fugas_.probabilidad(f["modelo"], X)
+        pt = f["tramo"].predict_proba(X.fillna(fugas_.VACIO))
+        out = pd.DataFrame({"p_fuga": p, "tramo": f["tramo"].classes_[pt.argmax(axis=1)],
+                            "p_tramo": pt.max(axis=1), "caudal_residuo": X["caudal_residuo_media3h"].values},
+                           index=hd.index)
+        return out.reindex(pd.DatetimeIndex(horas))
 
     # ------------------------------------------------------------------ anticipación (opcional)
     def _cargar_anticipacion(self, carpeta):

@@ -8,12 +8,14 @@ del motor.
   GET /health                           si el servicio está en pie, versión y modelos cargados
   POST /predict/contaminacion           predicción a pedido con lecturas que manda el cliente (422 si faltan
                                         datos); pide la clave de API en el encabezado X-API-Key (401 sin ella)
+  POST /predict/fugas                   lo mismo para fugas: probabilidad, alarma, tramo y caudal de más
   GET /api/estado                       hora simulada, conexión, alarma activa, modo de pronóstico
-  GET /api/sensores                     estado actual de los 21 sensores (observado, pronóstico, detector)
+  GET /api/sensores                     estado actual de los sensores (observado, pronóstico, detector)
   GET /api/sensores/{nodo}/serie?horas= serie horaria para graficar (observado, pronóstico, prob. de evento)
-  GET /api/red/series?horas=48          series de los 21 sensores a la vez (vista general)
+  GET /api/red/series?horas=48          series de todos los sensores a la vez (vista general)
   GET /api/alarmas                      alarmas de red (la más reciente primero)
   GET /api/anticipacion                 probabilidad de que empiece cada tipo de evento en 24 h y avisos
+  GET /api/fugas?horas=168              probabilidad de fuga por hora, tramo y alarmas de fuga
   GET /api/referencias                  norma, tolerancias de la meta y umbral del detector
   GET /                                 dashboard (React, compilado en frontend/dist)
 
@@ -198,6 +200,30 @@ def crear_app(cfg=None):
             raise HTTPException(422, {"error": e.error, "detalles": e.detalles})
         prediccion.guardar(s.motor.carpeta_sesion, r)
         return r
+
+    @app.post("/predict/fugas", dependencies=[con_clave],
+              responses={401: {"description": "Clave de API ausente o inválida"},
+                         422: {"description": "Faltan datos o no tienen el formato esperado"},
+                         503: {"description": "El servicio no tiene claves de API configuradas"}})
+    def predecir_fugas(solicitud: prediccion.SolicitudContaminacion):
+        """
+        Probabilidad de fuga en la última hora cerrada, alarma confirmada, tramo más probable (entre
+        qué dos sensores) y caudal de más que entrega la fuente. Recibe las mismas lecturas que
+        /predict/contaminacion. Responde 422 con el detalle si faltan datos.
+        """
+        s = servicio()
+        try:
+            return prediccion.predecir_fugas(solicitud, s.motor.modelos, cfg.historia_h, s.candado)
+        except prediccion.ErrorEntrada as e:
+            raise HTTPException(422, {"error": e.error, "detalles": e.detalles})
+
+    @app.get("/api/fugas")
+    def ver_fugas(horas: int = 168):
+        s = servicio()
+        with s.candado:
+            if getattr(s.motor.modelos, "fugas", None) is None:
+                return {"disponible": False, "hora": None, "actual": None, "serie": [], "fugas": [], "tramos": []}
+            return {"disponible": True, **s.motor.resumen_fugas(max(6, min(horas, 336)))}
 
     @app.get("/api/estado")
     def ver_estado():

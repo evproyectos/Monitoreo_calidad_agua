@@ -9,6 +9,9 @@ export default function Encabezado({ estado, sinServicio, vista, sensor }) {
     clase = "alarma";
     const tipo = TIPOS[estado.alarma_abierta?.tipo_sugerido];
     texto = `Alarma activa${tipo ? `: ${tipo.toLowerCase()}` : ""}`;
+  } else if (estado?.fuga_activa) {
+    clase = "alarma";
+    texto = "Posible fuga";
   } else if (estado?.ultima_hora_procesada) {
     clase = "normal";
     texto = "Operación normal";
@@ -19,7 +22,8 @@ export default function Encabezado({ estado, sinServicio, vista, sensor }) {
       <div>
         <h1>Monitoreo de calidad de agua</h1>
         <div className="sub">
-          Red de distribución con {estado?.sensores ?? 21} sensores de cloro, turbidez, pH y presión
+          Red de distribución con {estado?.sensores ?? 3} puntos de medición de cloro, turbidez, pH y presión,
+          y el caudal de la fuente
         </div>
       </div>
       <nav className="vistas" aria-label="Vistas">

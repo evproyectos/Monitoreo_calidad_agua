@@ -125,3 +125,30 @@ def test_sin_modelo_de_anticipacion_no_hay_avisos(cfg):
         m.procesar()
     assert m.lista_avisos() == [] and m.resumen_anticipacion() == {"hora": None, "tipos": []}
     assert m.estado()["anticipacion"] is False
+
+
+def test_alarma_de_fuga_con_tramo(tmp_path, cfg):
+    alto = {hora(k) for k in (5, 6, 7)}
+    modelos = ModelosFalsos(p_fuga=lambda h: 0.9 if h in alto else 0.1)
+    m = Motor(cfg, modelos, registrar=True)
+    alimentar(m, 13)
+    nov = [n for n in m.procesar() if n["evento"].startswith("fuga")]
+    assert [(n["evento"], n["hora"]) for n in nov] == [("fuga_abierta", str(hora(6))), ("fuga_cerrada", str(hora(9)))]
+    assert nov[0]["tramo"] == "J280 – J10" and nov[0]["caudal_residuo"] == 3.6
+    f = m.lista_fugas()
+    assert len(f) == 1 and f[0]["tramo"] == "J280 – J10" and f[0]["horas"] == 2 and f[0]["fin"] == str(hora(7))
+    r = m.resumen_fugas()
+    assert r["actual"]["en_alarma"] is False and len(r["serie"]) == 8 and sum(x["en_alarma"] for x in r["serie"]) == 2
+    assert m.estado()["fugas"] and not m.estado()["fuga_activa"]
+    sesion = list((tmp_path / "registros").iterdir())[0]
+    assert pd.read_csv(sesion / "fugas.csv")["en_alarma"].sum() == 2
+
+
+def test_sin_modelo_de_fugas_y_sensores_de_mas_se_ignoran(cfg):
+    m = Motor(cfg, ModelosFalsos(), registrar=False)
+    for x in lecturas(8):
+        m.recibir(x["fecha"], {**x["valores"], "CL2_J99": 0.5, "P_J99": 20.0, "TURB_J99": 0.4})
+        m.procesar()
+    assert m.lista_fugas() == [] and m.resumen_fugas()["actual"] is None
+    assert "CL2_J99" in m.bufer and m.ultima_hora_procesada == hora(6)
+    assert m.estado()["sensores"] == ModelosFalsos().sensores

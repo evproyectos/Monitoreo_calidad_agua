@@ -10,7 +10,11 @@ Motor de monitoreo en vivo.
        - pronostica cloro, turbidez y pH a 24 h para cada sensor;
        - calcula la probabilidad de evento de cada sensor y actualiza las alarmas;
        - si hay modelo de anticipación (notebook 09), calcula la probabilidad de que empiece
-         cada tipo de evento en las próximas 24 h y abre o cierra los avisos anticipados.
+         cada tipo de evento en las próximas 24 h y abre o cierra los avisos anticipados;
+       - si hay modelo de fugas (notebook 10), calcula la probabilidad de fuga y el tramo más
+         probable y abre o cierra las alarmas de fuga.
+     Solo se usan los sensores del sistema (los del detector): si la fuente de datos manda más,
+     los demás se ignoran.
      Procesar varias horas juntas cuesta casi lo mismo que una, así que el motor no se queda
      atrás aunque los datos lleguen acelerados.
 
@@ -23,6 +27,10 @@ Alarmas (igual que en la evaluación del notebook 07):
 Avisos anticipados (igual que en la evaluación del notebook 09): un tipo de evento entra en aviso
 si su probabilidad supera su umbral durante sus horas de confirmación seguidas. El aviso de ese
 tipo termina tras HORAS_FIN_AVISO horas seguidas sin aviso.
+
+Fugas (igual que en la evaluación del notebook 10): hay alarma de fuga si la probabilidad supera
+el umbral durante las horas de confirmación seguidas; se cierra tras `horas_para_cerrar` horas sin
+alarma. El tramo de la alarma es el más votado en sus horas (pesado por su probabilidad).
 """
 
 import csv
@@ -34,6 +42,7 @@ import numpy as np
 import pandas as pd
 
 from calidad_agua import anticipacion, calidad, carga, variables, detector
+from calidad_agua import fugas as fugas_
 from calidad_agua.red_neuronal import SALIDAS
 
 from monitoreo.config import Config
@@ -87,6 +96,16 @@ class Motor:
         self.lluvia_horaria = pd.Series(dtype="float64")
         self.anticipaciones = []                  # probabilidades por hora y tipo (DataFrames por lote)
 
+        # estado de las fugas
+        self.horas_alto_fuga = 0
+        self.fuga_abierta = None
+        self.fugas = []
+        self.ultima_fuga = {}
+        self.probabilidades_fuga = []             # DataFrames por lote (solo horas listas)
+        # caudal, presión, temperatura y lluvia horarios de los últimos días: la línea base de las
+        # fugas compara con la misma hora de la semana anterior (el búfer guarda menos historia)
+        self.historia_fugas = pd.DataFrame()
+
         # resultados acumulados (para la API y la verificación)
         self.pronosticos = []                     # DataFrames por lote
         self.deteccion = []
@@ -103,6 +122,9 @@ class Motor:
                                     ["fecha", "nodo", "p_evento", "tipo", "en_alarma"])
             self.reg_alarmas = Registro(os.path.join(self.carpeta_sesion, "alarmas.csv"),
                                         ["id", "inicio", "fin", "horas", "sensores", "tipo_sugerido"])
+            if getattr(self.modelos, "fugas", None) is not None:
+                self.reg_fugas = Registro(os.path.join(self.carpeta_sesion, "fugas.csv"),
+                                          ["fecha", "p_fuga", "tramo", "p_tramo", "caudal_residuo", "en_alarma"])
             if getattr(self.modelos, "anticipacion", None) is not None:
                 self.reg_ant = Registro(os.path.join(self.carpeta_sesion, "anticipacion.csv"),
                                         ["fecha", "tipo", "probabilidad", "umbral", "en_aviso"])
@@ -151,11 +173,12 @@ class Motor:
             return []
         desde = horas[0] - pd.Timedelta(hours=self.cfg.historia_h) + pd.Timedelta(minutes=15)
         hasta = horas[-1] + pd.Timedelta(minutes=45)
-        ventana = self.bufer.loc[desde:hasta]
+        ventana = carga.filtrar_sensores(self.bufer.loc[desde:hasta], self.sensores)
         w15 = calidad.lecturas_operativas(ventana)
 
         pron = self.modelos.pronosticar(variables.horario(w15), horas)
-        det = self.modelos.detectar(detector.horario(w15), horas)
+        hd = detector.horario(w15)
+        det = self.modelos.detectar(hd, horas)
         # al arrancar, hasta tener `historia_h` horas de datos las variables están incompletas:
         # se calcula todo pero no se encienden alarmas (y los pronósticos se marcan)
         listas = horas[(horas - self.primera_lectura) >= pd.Timedelta(hours=self.cfg.historia_h)]
@@ -184,6 +207,8 @@ class Motor:
 
         if getattr(self.modelos, "anticipacion", None) is not None:
             novedades += self._anticipar(w15, horas, listas)
+        if getattr(self.modelos, "fugas", None) is not None:
+            novedades += self._revisar_fugas(hd, horas, listas)
 
         self.pronosticos.append(pron)
         self.deteccion.append(det)
@@ -197,6 +222,100 @@ class Motor:
         limite = self.ultima_hora_procesada - pd.Timedelta(hours=self.cfg.historia_h + 2)
         self.bufer = self.bufer.loc[self.bufer.index > limite]
         return novedades
+
+    # ------------------------------------------------------------------ fugas
+    def _revisar_fugas(self, hd, horas, listas):
+        f = self.modelos.fugas
+        cols = [c for c in hd.columns if c.startswith(("Q_", "P_")) or c in (f"TEMP_{fugas_.FUENTE}", "lluvia_mm_h")]
+        # se guardan las horas nuevas; las que ya estaban no se reemplazan: se calcularon cuando eran
+        # las últimas de su ventana, con toda su historia (al principio de una ventana la limpieza de
+        # lecturas no ve las anteriores y puede dar otro promedio)
+        if len(self.historia_fugas):
+            nuevas = hd.loc[~hd.index.isin(self.historia_fugas.index), cols]
+            self.historia_fugas = pd.concat([self.historia_fugas, nuevas]).sort_index()
+        else:
+            self.historia_fugas = hd[cols]
+        corte = horas[-1] - pd.Timedelta(hours=fugas_.HISTORIA_H + 24)
+        self.historia_fugas = self.historia_fugas[self.historia_fugas.index > corte]
+        F = self.modelos.detectar_fugas(self.historia_fugas, horas)
+        F["en_alarma"] = False
+        novedades = []
+        for hora in horas:
+            if hora not in listas:
+                continue
+            fila = F.loc[hora]
+            p = float(fila["p_fuga"])
+            self.horas_alto_fuga = self.horas_alto_fuga + 1 if (p == p and p >= f["umbral"]) else 0
+            en_alarma = self.horas_alto_fuga >= f["confirmar_h"]
+            F.loc[hora, "en_alarma"] = en_alarma
+            novedades += self._actualizar_fuga(hora, en_alarma, fila)
+            self.ultima_fuga = {"hora": hora, "probabilidad": p, "umbral": f["umbral"], "en_alarma": en_alarma,
+                                "tramo": fila["tramo"], "p_tramo": float(fila["p_tramo"]),
+                                "caudal_residuo": float(fila["caudal_residuo"])}
+        lista = F[F.index.isin(listas)]
+        self.probabilidades_fuga.append(lista)
+        if self.carpeta_sesion and len(lista):
+            self.reg_fugas.escribir(lista.rename_axis("fecha").reset_index().to_dict("records"))
+        return novedades
+
+    def _actualizar_fuga(self, hora, en_alarma, fila):
+        a = self.fuga_abierta
+        if en_alarma:
+            if a is None:
+                a = self.fuga_abierta = {"id": len(self.fugas) + 1, "inicio": hora, "fin": hora, "tramos": Counter(),
+                                         "probabilidad_maxima": 0.0, "caudal_maximo": np.nan, "sin_alarma": 0}
+                nueva = True
+            else:
+                nueva = False
+            a.update(fin=hora, sin_alarma=0, probabilidad_maxima=max(a["probabilidad_maxima"], float(fila["p_fuga"])))
+            a["tramos"][fila["tramo"]] += float(fila["p_tramo"])
+            q = float(fila["caudal_residuo"])
+            a["caudal_maximo"] = q if not a["caudal_maximo"] == a["caudal_maximo"] else max(a["caudal_maximo"], q)
+            if nueva:
+                return [{"evento": "fuga_abierta", "id": a["id"], "hora": str(hora), "tramo": fila["tramo"],
+                         "p_tramo": float(fila["p_tramo"]), "probabilidad": float(fila["p_fuga"]),
+                         "umbral": self.modelos.fugas["umbral"], "caudal_residuo": q}]
+            return []
+        if a is not None:
+            a["sin_alarma"] += 1
+            if a["sin_alarma"] >= self.cfg.horas_para_cerrar:
+                self.fugas.append(self._fuga_json(a))
+                self.fuga_abierta = None
+                return [{"evento": "fuga_cerrada", "id": a["id"], "hora": str(hora)}]
+        return []
+
+    @staticmethod
+    def _fuga_json(a, abierta=False):
+        return {"id": a["id"], "inicio": str(a["inicio"]), "fin": None if abierta else str(a["fin"]),
+                "horas": int((a["fin"] - a["inicio"]).total_seconds() // 3600) + 1,
+                "tramo": a["tramos"].most_common(1)[0][0] if a["tramos"] else None,
+                "probabilidad_maxima": _num(a["probabilidad_maxima"], 3),
+                "caudal_extra_Ls": _num(a["caudal_maximo"], 1)}
+
+    def lista_fugas(self):
+        return self.fugas + ([self._fuga_json(self.fuga_abierta, abierta=True)] if self.fuga_abierta else [])
+
+    def tabla_fugas(self):
+        """Probabilidad de fuga y tramo por hora (solo horas listas)."""
+        return pd.concat(self.probabilidades_fuga).sort_index() if self.probabilidades_fuga else pd.DataFrame()
+
+    def resumen_fugas(self, horas=168):
+        """Estado actual y las últimas `horas` de probabilidad de fuga (para el dashboard)."""
+        u = self.ultima_fuga
+        t = self.tabla_fugas()
+        if t.empty or not u:
+            return {"hora": None, "actual": None, "serie": [], "fugas": self.lista_fugas(), "tramos": []}
+        t = t[t.index > t.index.max() - pd.Timedelta(hours=horas)]
+        f = self.modelos.fugas
+        return {"hora": str(u["hora"]),
+                "actual": {"probabilidad": _num(u["probabilidad"], 3), "umbral": u["umbral"],
+                           "en_alarma": bool(u["en_alarma"]), "tramo": u["tramo"], "p_tramo": _num(u["p_tramo"], 3),
+                           "caudal_extra_Ls": _num(u["caudal_residuo"], 1)},
+                "serie": [{"fecha": str(i), "probabilidad": _num(r.p_fuga, 3),
+                           "caudal_extra_Ls": _num(r.caudal_residuo, 2),
+                           "en_alarma": bool(r.en_alarma)} for i, r in t.iterrows()],
+                "fugas": self.lista_fugas(), "tramos": sorted(set(f["tramos"].values())),
+                "modelo": f["nombre"], "confirmar_h": f["confirmar_h"]}
 
     # ------------------------------------------------------------------ anticipación
     def _anticipar(self, w15, horas, listas):
@@ -361,7 +480,7 @@ class Motor:
 
     def series_red(self, horas=48):
         """
-        Series de los 21 sensores a la vez (para la vista general): observado de las últimas
+        Series de todos los sensores del sistema a la vez (para la vista general): observado de las últimas
         `horas` y pronóstico de las próximas 24 h, por parámetro.
         """
         if not hasattr(self, "reciente_pron") or self.reciente_pron.empty:
@@ -412,7 +531,10 @@ class Motor:
                 "error_pronostico_lluvia": getattr(self.modelos.pronostico, "error", None),
                 "confirmar_h": self.modelos.confirmar_h,
                 "anticipacion": getattr(self.modelos, "anticipacion", None) is not None,
-                "avisos_anticipados_activos": sorted(a["tipo"] for a in self.avisos_abiertos.values())}
+                "avisos_anticipados_activos": sorted(a["tipo"] for a in self.avisos_abiertos.values()),
+                "sensores": list(self.sensores),
+                "fugas": getattr(self.modelos, "fugas", None) is not None,
+                "fuga_activa": self.fuga_abierta is not None}
 
 
 def _nombre_tipo(k):

@@ -4,6 +4,7 @@ import { PARAMETROS } from "../formato.js";
 import GraficoRed, { EXTREMOS, TEXTO_EXTREMO, resumenRed } from "./GraficoRed.jsx";
 import MapaCalor from "./MapaCalor.jsx";
 import Anticipacion from "./Anticipacion.jsx";
+import Fugas from "./Fugas.jsx";
 import { estadoSensor, TEXTO_ESTADO, COLOR_ESTADO } from "./RedSensores.jsx";
 
 const HORAS = 72;
@@ -22,6 +23,7 @@ export default function VistaGeneral({ sensores, referencias, onAbrir }) {
   return (
     <section className="general" aria-label="Vista general de la red">
       <Anticipacion />
+      <Fugas />
       <div className="panel">
         <div className="general-cabeza">
           <p className="resumen" aria-label="Sensores por estado">
@@ -45,7 +47,7 @@ export default function VistaGeneral({ sensores, referencias, onAbrir }) {
           <span className="nota">Últimas {HORAS} h y pronóstico de las próximas 24 h</span>
         </div>
         <div className="claves">
-          <span><i className="linea" /> Mediana de los 21 sensores</span>
+          <span><i className="linea" /> Mediana de los {sensores.length} sensores</span>
           <span><i className="banda obs" /> La mayoría (del 10 % al 90 %)</span>
           <span><i className="linea fina" /> {EXTREMOS[par].length > 1 ? "Sensores más bajo y más alto" : TEXTO_EXTREMO[EXTREMOS[par][0]]}</span>
           <span><i className="linea pron" /> Pronóstico</span>

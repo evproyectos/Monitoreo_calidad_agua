@@ -1,5 +1,5 @@
 """
-Predicción a pedido (POST /predict/contaminacion, RF-003.1).
+Predicción a pedido (POST /predict/contaminacion y POST /predict/fugas, RF-003.1).
 
 Un sistema externo manda las últimas lecturas de 15 min de toda la red (el mismo formato que los
 sensores le envían a la API de datos) y recibe, para la última hora cerrada:
@@ -12,6 +12,11 @@ regla de "hora cerrada"), así que para la misma hora da los mismos números que
 
 Hace falta la red completa porque el detector compara cada sensor con el resto (cuántos se
 desvían a la vez, desvío respecto a la mediana de la red).
+
+POST /predict/fugas recibe lo mismo (pero con 8 días de historia: la línea base de las fugas
+compara con la misma hora de la semana anterior) y devuelve, para la última hora cerrada, la probabilidad de
+fuga, si la alarma está confirmada, el tramo más probable (entre qué dos sensores) y cuánto
+caudal de más está entregando la fuente frente a lo esperado (modelo del notebook 10).
 """
 
 import json
@@ -25,6 +30,7 @@ import pandas as pd
 from pydantic import BaseModel, Field
 
 from calidad_agua import calidad, carga, detector, variables
+from calidad_agua import fugas as fugas_
 from calidad_agua.red_neuronal import HORIZONTE_H, SALIDAS
 
 from monitoreo.alertas import fuera_de_norma
@@ -189,6 +195,44 @@ def predecir(solicitud, modelos, historia_h, umbral_amarillo, candado):
         },
         "version_modelos": modelos.version,
         "sensores": sensores,
+        "duracion_ms": round((time.perf_counter() - t0) * 1000, 1),
+    }
+
+
+def predecir_fugas(solicitud, modelos, historia_h, candado):
+    t0 = time.perf_counter()
+    f = modelos.fugas
+    if f is None:
+        raise ErrorEntrada("El servicio no tiene modelo de fugas.",
+                           ["corra el notebook 10 del proyecto Modelo_calidad_agua y copie modelos/fugas.joblib"])
+    # la línea base de las fugas compara con la misma hora de los 7 días anteriores
+    ventana, hora = validar(solicitud, modelos.orden_sensores, max(historia_h, fugas_.HISTORIA_H))
+    w15 = calidad.lecturas_operativas(ventana)
+    horas = pd.date_range(hora - pd.Timedelta(hours=f["confirmar_h"] - 1), hora, freq="1h")
+    with candado:
+        F = modelos.detectar_fugas(detector.horario(w15), horas)
+    p = float(F.loc[hora, "p_fuga"])
+    sobre = (F["p_fuga"] >= f["umbral"]).iloc[::-1].astype(int).cumprod().sum()
+    confirmada = bool(sobre >= f["confirmar_h"])
+    nivel = "rojo" if confirmada else ("amarillo" if p >= f["umbral"] else "verde")
+    return {
+        "hora_evaluada": str(hora),
+        "nivel": nivel,
+        "probabilidad_fuga": _num(p),
+        "umbral": f["umbral"],
+        "horas_sobre_umbral": int(sobre),
+        "alarma_confirmada": confirmada,
+        "tramo": F.loc[hora, "tramo"],
+        "probabilidad_tramo": _num(F.loc[hora, "p_tramo"]),
+        "caudal_extra_Ls": _num(F.loc[hora, "caudal_residuo"], 2),
+        "criterios": {
+            "rojo": f"{f['confirmar_h']} horas seguidas con probabilidad ≥ {f['umbral']} (alarma, como el dashboard)",
+            "amarillo": f"probabilidad ≥ {f['umbral']} en la hora evaluada",
+            "tramo": "entre qué dos sensores está la fuga (los dos más cercanos por tubería)",
+            "caudal_extra_Ls": "caudal de la fuente menos el esperado por la operación normal, media de 3 h",
+        },
+        "modelo": f["nombre"],
+        "version_modelos": modelos.version,
         "duracion_ms": round((time.perf_counter() - t0) * 1000, 1),
     }
 

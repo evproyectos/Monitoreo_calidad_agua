@@ -10,7 +10,9 @@ lotes de los notebooks sobre la tabla completa:
   3. métricas: acierto del pronóstico (notebook 08) y eventos detectados / falsas alarmas
      (notebook 07);
   4. anticipación (si está el modelo del notebook 09): misma probabilidad de cada tipo de evento
-     en las próximas 24 h, mismos avisos y eventos anticipados.
+     en las próximas 24 h, mismos avisos y eventos anticipados;
+  5. fugas (si está el modelo del notebook 10): misma probabilidad de fuga, mismas alarmas y
+     fugas detectadas.
 
 Antes de la prueba se mandan `--precarga-dias` días (31 por defecto): la anticipación usa la lluvia
 de los últimos 30 días, y con menos historia esa variable no sería la misma que en el notebook.
@@ -28,6 +30,7 @@ import numpy as np
 import pandas as pd
 
 from calidad_agua import anticipacion, carga, calidad, metas, variables, detector
+from calidad_agua import fugas as fugas_
 from calidad_agua.red_neuronal import SALIDAS
 
 from monitoreo.config import Config
@@ -139,9 +142,41 @@ def main():
     print(f"   alarmas de red abiertas por el motor: {len(motor.lista_alarmas())}")
 
     ok_ant = verificar_anticipacion(modelos, crudo, motor, INICIO_PRUEBA)
+    ok_fug = verificar_fugas(modelos, crudo, motor, INICIO_PRUEBA)
 
     print("\nRESULTADO:", "VERIFICACIÓN SUPERADA" if ok_pron and n_dif <= 0.001 * len(d) and distintas == 0
-          and ok_ant else "HAY DIFERENCIAS: revisar")
+          and ok_ant and ok_fug else "HAY DIFERENCIAS: revisar")
+
+
+def verificar_fugas(modelos, crudo, motor, inicio):
+    """Probabilidad de fuga en vivo contra el cálculo del notebook 10 sobre la tabla completa."""
+    f = modelos.fugas
+    if f is None:
+        print("\n5. Fugas: no hay modelo (fugas.joblib); se omite")
+        return True
+    print(f"\n5. Fugas ({f['nombre']}, notebook 10)")
+    F_v = motor.tabla_fugas()
+    F_v = F_v[F_v.index >= inicio]
+    F_b = modelos.detectar_fugas(detector.horario(calidad.lecturas_operativas(crudo)), F_v.index)
+    dif = np.abs(F_v["p_fuga"].values - F_b["p_fuga"].values)
+    n_dif = int((dif > 1e-3).sum())
+    print(f"   probabilidad de fuga: {len(F_v):,} horas · diferencia máxima {np.nanmax(dif):.2e} · "
+          f"con más de 0,001: {n_dif} · tramo distinto: {int((F_v['tramo'] != F_b['tramo']).sum())}")
+    a_b = fugas_.alarma(F_b["p_fuga"].values, f["umbral"], f["confirmar_h"])
+    distintas = int((F_v["en_alarma"].values.astype(bool) != a_b).sum())
+    print(f"   horas en alarma: {int(F_v['en_alarma'].sum())} en vivo, {int(a_b.sum())} en el cálculo del notebook "
+          f"(distintas: {distintas})")
+    try:
+        cat = carga.catalogo_eventos()
+    except FileNotFoundError:
+        cat = None
+    if cat is not None:
+        y = fugas_.clase(pd.DataFrame(index=F_v.index), cat).values
+        _, r = fugas_.evaluar(F_v.index, F_v["en_alarma"].values.astype(bool), y, F_v.index[0],
+                              F_v.index[-1] + pd.Timedelta(hours=1))
+        print(f"   fugas detectadas: {r['detectadas']} de {r['fugas']} · falsas alarmas: {r['falsas']} "
+              f"({r['falsas_por_semana']:.2f} por semana) · alarmas de fuga del motor: {len(motor.lista_fugas())}")
+    return n_dif <= 0.001 * len(F_v) and distintas == 0
 
 
 def verificar_anticipacion(modelos, crudo, motor, inicio):
