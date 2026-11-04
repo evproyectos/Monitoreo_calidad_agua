@@ -1,0 +1,17 @@
+# Archivos que no se mandan a Docker al construir (el contexto es la carpeta de los tres proyectos).
+**/node_modules
+**/venv
+**/.venv
+**/__pycache__
+**/*.pyc
+**/.git
+**/.env
+**/.env.*
+**/secretos
+Monitoreo_calidad_agua/frontend/dist
+Monitoreo_calidad_agua/backend/registros
+Simulador_sensor/datos
+Modelo_calidad_agua/notebooks
+Modelo_calidad_agua/mlartifacts
+Modelo_calidad_agua/mlflow.db
+Modelo_calidad_agua/modelos

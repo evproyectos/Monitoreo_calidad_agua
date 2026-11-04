@@ -5,3 +5,6 @@ python-dotenv
 cryptography
 # Además, el paquete del proyecto de modelos (mismo código que los notebooks):
 #   pip install -e "..\..\Modelo_calidad_agua[red]"
+# resultados en una base de datos (opcional, BASE_DE_DATOS; PostgreSQL con TimescaleDB en Docker)
+sqlalchemy>=2
+psycopg[binary]>=3.1

@@ -1,0 +1,92 @@
+# Sistema completo con un solo comando (RNF-008), desde esta carpeta:
+#
+#     docker compose up --build
+#
+# Los tres proyectos tienen que estar en la misma carpeta (como en D:\Practica_Profesional):
+#   Simulador_sensor/       API de datos y emisor (tiempo_real) y el dataset (datos/dtown/final)
+#   Modelo_calidad_agua/    paquete calidad_agua, modelos entrenados (modelos/) y MLflow
+#   Monitoreo_calidad_agua/ este proyecto
+#
+# Servicios:
+#   datos       API de datos de los sensores                 http://127.0.0.1:8000
+#   emisor      manda las lecturas de la prueba a la API de datos (como los sensores)
+#   monitoreo   servicio con el dashboard                    http://127.0.0.1:8001
+#   mlflow      experimentos de los notebooks                http://127.0.0.1:5000
+#   db          PostgreSQL con TimescaleDB: el servicio guarda ahí los resultados de cada hora
+#
+# Los secretos (TELEGRAM_TOKEN, CLAVES_API, ...) van en el .env de esta carpeta, que no se
+# versiona; sin él el servicio funciona igual, con las alertas en la consola.
+
+services:
+  datos:
+    build:
+      context: ..
+      dockerfile: Monitoreo_calidad_agua/docker/datos.Dockerfile
+    ports: ["127.0.0.1:8000:8000"]
+    volumes:
+      - ../Simulador_sensor/datos:/app/datos:ro
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/estado', timeout=4)"]
+      interval: 10s
+      retries: 10
+
+  emisor:
+    build:
+      context: ..
+      dockerfile: Monitoreo_calidad_agua/docker/datos.Dockerfile
+    command: ["python", "-m", "tiempo_real.emisor", "--url", "http://datos:8000", "--velocidad", "${VELOCIDAD:-1}", "--precarga-dias", "31"]
+    volumes:
+      - ../Simulador_sensor/datos:/app/datos:ro
+    depends_on:
+      datos: {condition: service_healthy}
+      monitoreo: {condition: service_healthy}
+    restart: "no"
+
+  db:
+    image: timescale/timescaledb:2.17.2-pg16
+    environment:
+      POSTGRES_DB: monitoreo
+      POSTGRES_USER: monitoreo
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-monitoreo}
+    volumes:
+      - db:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U monitoreo -d monitoreo"]
+      interval: 5s
+      retries: 20
+
+  monitoreo:
+    build:
+      context: ..
+      dockerfile: Monitoreo_calidad_agua/Dockerfile
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      URL_DATOS: http://datos:8000
+      CARPETA_MODELOS: /modelos
+      CARPETA_REGISTROS: /registros
+      BASE_DE_DATOS: postgresql://monitoreo:${POSTGRES_PASSWORD:-monitoreo}@db:5432/monitoreo
+      URL_DASHBOARD: http://127.0.0.1:8001
+    ports: ["127.0.0.1:8001:8001"]
+    volumes:
+      - ../Modelo_calidad_agua/modelos:/modelos:ro
+      - ./backend/registros:/registros
+    depends_on:
+      datos: {condition: service_healthy}
+      db: {condition: service_healthy}
+
+  mlflow:
+    build:
+      dockerfile_inline: |
+        FROM python:3.13-slim
+        RUN pip install --no-cache-dir "mlflow==3.17.2"
+    command: ["mlflow", "ui", "--backend-store-uri", "sqlite:////mlflow/mlflow.db", "--host", "0.0.0.0",
+              "--port", "5000", "--workers", "1"]
+    ports: ["127.0.0.1:5000:5000"]
+    volumes:
+      - ../Modelo_calidad_agua/mlflow.db:/mlflow/mlflow.db
+      - ../Modelo_calidad_agua/mlartifacts:/mlartifacts
+
+volumes:
+  db:

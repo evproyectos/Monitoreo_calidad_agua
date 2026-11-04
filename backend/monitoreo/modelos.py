@@ -25,6 +25,15 @@ from monitoreo import pronostico_lluvia
 PISO_LOG = 0.05
 
 
+def firma(carpeta):
+    """Nombre, fecha y tamaño de cada archivo de modelo de la carpeta: si cambia, hay modelos nuevos."""
+    carpeta = os.fspath(carpeta)
+    if not os.path.isdir(carpeta):
+        return ()
+    return tuple(sorted((f, os.path.getmtime(os.path.join(carpeta, f)), os.path.getsize(os.path.join(carpeta, f)))
+                        for f in os.listdir(carpeta) if f.endswith((".joblib", ".keras"))))
+
+
 def huella(ruta):
     """Identifica la versión de un archivo de modelo: SHA-256 (12 primeros) y fecha del archivo."""
     h = hashlib.sha256()
@@ -81,6 +90,10 @@ class Modelos:
         self.sensores = list(d["sensores"])
         self._cargar_anticipacion(carpeta)
         self._cargar_fugas(carpeta)
+        # referencia para vigilar la deriva de los datos (herramientas/referencia_deriva.py), si existe
+        ruta_r = os.path.join(carpeta, "referencia_deriva.joblib")
+        self.deriva = joblib.load(ruta_r) if os.path.exists(ruta_r) else None
+        self.firma = firma(carpeta)
 
     # ------------------------------------------------------------------ fugas (opcional)
     def _cargar_fugas(self, carpeta):

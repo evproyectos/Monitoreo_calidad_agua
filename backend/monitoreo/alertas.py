@@ -253,6 +253,8 @@ class Alertas:
                 self.avisar(self._texto_fuga(n))
             elif n["evento"] == "fuga_cerrada":
                 self.avisar(self._texto_fuga_cerrada(motor, n))
+            elif n["evento"] == "deriva":
+                self.avisar(self._texto_deriva(n))
         if self.con_riesgo:
             self._revisar_riesgo(motor, sensores, ahora, horas_nuevas)
         if self.hora_resumen >= 0:
@@ -308,6 +310,13 @@ class Alertas:
         return (f"🟢 <b>Fuga #{a['id']}: alarma cerrada</b> · tramo {html.escape(str(a['tramo']))}\n"
                 f"De {_fecha(a['inicio'])} a {_fecha(a['fin'])} ({a['horas']} h) · hasta "
                 f"{_num(a['caudal_extra_Ls'], 1)} L/s de más")
+
+    def _texto_deriva(self, n):
+        cols = " · ".join(f"{html.escape(c)} (PSI {_num(v)})" for c, v in n["columnas"][:8])
+        return (f"🟠 <b>Los datos se apartan de los del entrenamiento</b> · {_fecha(n['hora'])}\n"
+                f"Última semana: {cols}\n"
+                "<b>Qué hacer:</b> revisar y calibrar esos sensores; si las lecturas están bien, la operación "
+                "cambió y conviene volver a entrenar los modelos (Modelo_calidad_agua/herramientas/reentrenar.py).")
 
     def _texto_cerrada(self, motor, n):
         a = next((x for x in motor.alarmas if x["id"] == n["id"]), None)

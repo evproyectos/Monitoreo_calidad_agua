@@ -159,3 +159,32 @@ def test_fugas_en_el_dashboard_y_a_pedido(cliente):
     assert d["tramo"] == "J280 – J10" and d["caudal_extra_Ls"] == 3.2 and d["horas_sobre_umbral"] == 2
     assert cliente.post("/predict/fugas", json={"lecturas": lecturas(2)}).status_code == 422
     assert cliente.post("/predict/fugas", json={"lecturas": lecturas(7)}, headers={"X-API-Key": "x"}).status_code == 401
+
+
+def test_modelos_nuevos_se_cargan_sin_reiniciar(tmp_path, monkeypatch):
+    modelos = ModelosFalsos()
+    modelos.firma = ("a",)
+    monkeypatch.setattr(srv, "Motor", lambda cfg: Motor(cfg, modelos, registrar=False))
+    s = srv.Servicio(configuracion(tmp_path))
+    monkeypatch.setattr(srv, "firma", lambda carpeta: ("a",))
+    assert s.revisar_modelos() is False                     # nada cambió
+    monkeypatch.setattr(srv, "firma", lambda carpeta: ("b",))
+    nuevos = ModelosFalsos()
+    monkeypatch.setattr(srv, "Modelos", lambda carpeta, modo: nuevos)
+    assert s.revisar_modelos() is True and s.motor.modelos is nuevos and s.error_recarga is None
+    assert s.recargas[-1]["modelos"]["detector"] == "bbbbbbbbbbbb"
+    otros = ModelosFalsos()
+    otros.sensores = ["J280"]
+    nuevos.firma = ("b",)
+    monkeypatch.setattr(srv, "firma", lambda carpeta: ("c",))
+    monkeypatch.setattr(srv, "Modelos", lambda carpeta, modo: otros)
+    assert s.revisar_modelos() is False and "otros sensores" in s.error_recarga and s.motor.modelos is nuevos
+
+    def roto(carpeta, modo):
+        raise RuntimeError("archivo a medio copiar")
+    monkeypatch.setattr(srv, "Modelos", roto)
+    assert s.revisar_modelos() is False and "medio copiar" in s.error_recarga
+
+
+def test_deriva_sin_referencia(cliente):
+    assert cliente.get("/api/deriva").json() == {"disponible": False}

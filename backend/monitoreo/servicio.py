@@ -16,6 +16,7 @@ del motor.
   GET /api/alarmas                      alarmas de red (la más reciente primero)
   GET /api/anticipacion                 probabilidad de que empiece cada tipo de evento en 24 h y avisos
   GET /api/fugas?horas=168              probabilidad de fuga por hora, tramo y alarmas de fuga
+  GET /api/deriva                       deriva de los datos: la última semana contra el entrenamiento
   GET /api/referencias                  norma, tolerancias de la meta y umbral del detector
   GET /                                 dashboard (React, compilado en frontend/dist)
 
@@ -25,6 +26,7 @@ Con CERTIFICADO_TLS y CLAVE_TLS en el .env atiende solo por HTTPS (https://127.0
 
 import argparse
 import asyncio
+import os
 import threading
 import time
 from contextlib import asynccontextmanager
@@ -41,7 +43,10 @@ from monitoreo import __version__, prediccion, seguridad
 from monitoreo.alertas import Alertas
 from monitoreo.cliente_datos import ClienteDatos
 from monitoreo.config import Config, RAIZ
+from monitoreo.modelos import Modelos, firma
 from monitoreo.motor import Motor
+
+REVISAR_MODELOS_S = 600         # cada cuánto se revisa si hay modelos nuevos en la carpeta
 
 DIST = RAIZ / "frontend" / "dist"
 
@@ -80,10 +85,39 @@ class Servicio:
         self.ultimo_ciclo_s = None
         self._parar = threading.Event()
         self.hilo = threading.Thread(target=self._ciclo, daemon=True)
+        self.recargas, self.error_recarga, self._ultima_revision = [], None, time.time()
+
+    def revisar_modelos(self):
+        """
+        Si cambiaron los archivos de la carpeta de modelos (un reentrenamiento,
+        Modelo_calidad_agua/herramientas/reentrenar.py), carga los nuevos y el motor sigue con
+        ellos sin reiniciar el servicio (RF-004.2). Si los nuevos no cargan, o son de otros sensores,
+        se sigue con los actuales y queda el error en /health.
+        """
+        if firma(self.cfg.carpeta_modelos) == self.motor.modelos.firma:
+            return False
+        try:
+            nuevos = Modelos(self.cfg.carpeta_modelos, self.cfg.modo_pronostico)
+        except Exception as e:                           # un archivo a medio copiar, una versión vieja...
+            self.error_recarga = str(e)[:200]
+            return False
+        if nuevos.sensores != self.motor.sensores:
+            self.error_recarga = f"los modelos nuevos son de otros sensores ({nuevos.sensores}): reinicie el servicio"
+            return False
+        with self.candado:
+            self.motor.modelos = nuevos
+        self.recargas.append({"hora": time.strftime("%Y-%m-%d %H:%M:%S"),
+                              "modelos": {k: v["sha256"] for k, v in nuevos.version.items()}})
+        self.error_recarga = None
+        print(f"Modelos nuevos cargados: {self.recargas[-1]['modelos']}")
+        return True
 
     def _ciclo(self):
         while not self._parar.is_set():
             t0 = time.time()
+            if t0 - self._ultima_revision >= REVISAR_MODELOS_S:
+                self._ultima_revision = t0
+                self.revisar_modelos()
             try:
                 lecturas = self.cliente.lecturas_desde(self.motor.ultima_lectura)
                 self.conectado, self.ultimo_error = True, None
@@ -173,6 +207,8 @@ def crear_app(cfg=None):
             problemas.append("sin conexión con la API de datos" + (f": {s.ultimo_error}" if s.ultimo_error else ""))
         if e["error_pronostico_lluvia"]:
             problemas.append(f"pronóstico de lluvia: {e['error_pronostico_lluvia']}")
+        if s.error_recarga:
+            problemas.append(f"modelos nuevos sin cargar: {s.error_recarga}")
         return {"estado": "degradado" if problemas else "ok", "problemas": problemas,
                 "version": __version__,
                 "modelos": {**m.version, "modo": m.modo,
@@ -180,7 +216,8 @@ def crear_app(cfg=None):
                 "pronostico_lluvia": e["pronostico_lluvia"],
                 "conectado_a_datos": s.conectado,
                 "ultima_hora_procesada": e["ultima_hora_procesada"],
-                "alertas": s.alertas.canal.nombre}
+                "alertas": s.alertas.canal.nombre,
+                "recargas_de_modelos": s.recargas[-5:]}
 
     @app.post("/predict/contaminacion", dependencies=[con_clave],
               responses={401: {"description": "Clave de API ausente o inválida"},
@@ -224,6 +261,16 @@ def crear_app(cfg=None):
             if getattr(s.motor.modelos, "fugas", None) is None:
                 return {"disponible": False, "hora": None, "actual": None, "serie": [], "fugas": [], "tramos": []}
             return {"disponible": True, **s.motor.resumen_fugas(max(6, min(horas, 336)))}
+
+    @app.get("/api/deriva")
+    def ver_deriva():
+        """Deriva de los datos: cada lectura de la última semana contra el entrenamiento (PSI)."""
+        s = servicio()
+        with s.candado:
+            if getattr(s.motor.modelos, "deriva", None) is None:
+                return {"disponible": False}
+            return {"disponible": True, **(s.motor.ultima_deriva or {"hora": None, "columnas": []}),
+                    "criterio": "PSI < 0,10 estable · 0,10 a 0,25 vigilar · > 0,25 deriva"}
 
     @app.get("/api/estado")
     def ver_estado():
@@ -291,9 +338,11 @@ if __name__ == "__main__":
     ap = argparse.ArgumentParser()
     ap.add_argument("--modo", choices=["combinado", "arboles"], default=None)
     ap.add_argument("--puerto", type=int, default=8001)
+    ap.add_argument("--host", default=os.environ.get("HOST", "127.0.0.1"),
+                    help="dirección donde atender (0.0.0.0 dentro de Docker)")
     args = ap.parse_args()
     cfg = Config()
     if args.modo:
         cfg.modo_pronostico = args.modo
-    seguridad.servidor(crear_app(cfg), "127.0.0.1", args.puerto, cfg.certificado_tls, cfg.clave_tls,
+    seguridad.servidor(crear_app(cfg), args.host, args.puerto, cfg.certificado_tls, cfg.clave_tls,
                        log_level="warning").run()

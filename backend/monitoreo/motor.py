@@ -42,6 +42,7 @@ import numpy as np
 import pandas as pd
 
 from calidad_agua import anticipacion, calidad, carga, variables, detector
+from calidad_agua import deriva as deriva_
 from calidad_agua import fugas as fugas_
 from calidad_agua.red_neuronal import SALIDAS
 
@@ -50,20 +51,27 @@ from monitoreo.modelos import Modelos
 
 
 HORAS_FIN_AVISO = 6            # horas seguidas sin aviso para dar por terminado un aviso anticipado
+HORA_DERIVA = 6                # cada día a esta hora se compara la última semana con el entrenamiento
+DIAS_DERIVA = 7
 DIAS_LLUVIA = 31               # historia de lluvia para la variable de 30 días de la anticipación
 
 
 class Registro:
-    """CSV que se escribe a medida que ocurren las cosas."""
+    """CSV que se escribe a medida que ocurren las cosas (y la misma tabla en la base de datos, si
+    hay una: ver monitoreo/base_datos.py)."""
 
-    def __init__(self, ruta, columnas):
+    def __init__(self, ruta, columnas, base=None):
         self.f = open(ruta, "w", newline="", encoding="utf-8")
         self.w = csv.DictWriter(self.f, fieldnames=columnas, extrasaction="ignore")
         self.w.writeheader()
+        self.columnas, self.base = columnas, base
+        self.tabla = os.path.splitext(os.path.basename(ruta))[0]
 
     def escribir(self, filas):
         self.w.writerows(filas)
         self.f.flush()
+        if self.base is not None:
+            self.base.escribir(self.tabla, [{c: f.get(c) for c in self.columnas} for f in filas])
 
 
 class Motor:
@@ -105,6 +113,9 @@ class Motor:
         # caudal, presión, temperatura y lluvia horarios de los últimos días: la línea base de las
         # fugas compara con la misma hora de la semana anterior (el búfer guarda menos historia)
         self.historia_fugas = pd.DataFrame()
+        # deriva de los datos: lecturas horarias de la última semana y la última revisión
+        self.historia_deriva = pd.DataFrame()
+        self.ultima_deriva = None
 
         # resultados acumulados (para la API y la verificación)
         self.pronosticos = []                     # DataFrames por lote
@@ -116,18 +127,24 @@ class Motor:
             self.carpeta_sesion = os.path.join(self.cfg.carpeta_registros,
                                                "sesion_" + time.strftime("%Y%m%d_%H%M%S"))
             os.makedirs(self.carpeta_sesion, exist_ok=True)
+            base = None
+            if self.cfg.base_de_datos:
+                from monitoreo.base_datos import BaseDatos
+                base = BaseDatos(self.cfg.base_de_datos, os.path.basename(self.carpeta_sesion))
+            self.base = base
             self.reg_pron = Registro(os.path.join(self.carpeta_sesion, "pronosticos.csv"),
-                                     ["fecha", "nodo", "fecha_pronosticada"] + SALIDAS + [f"base_{p}" for p in SALIDAS])
+                                     ["fecha", "nodo", "fecha_pronosticada"] + SALIDAS + [f"base_{p}" for p in SALIDAS],
+                                     base)
             self.reg_det = Registro(os.path.join(self.carpeta_sesion, "deteccion.csv"),
-                                    ["fecha", "nodo", "p_evento", "tipo", "en_alarma"])
+                                    ["fecha", "nodo", "p_evento", "tipo", "en_alarma"], base)
             self.reg_alarmas = Registro(os.path.join(self.carpeta_sesion, "alarmas.csv"),
-                                        ["id", "inicio", "fin", "horas", "sensores", "tipo_sugerido"])
+                                        ["id", "inicio", "fin", "horas", "sensores", "tipo_sugerido"], base)
             if getattr(self.modelos, "fugas", None) is not None:
                 self.reg_fugas = Registro(os.path.join(self.carpeta_sesion, "fugas.csv"),
-                                          ["fecha", "p_fuga", "tramo", "p_tramo", "caudal_residuo", "en_alarma"])
+                                          ["fecha", "p_fuga", "tramo", "p_tramo", "caudal_residuo", "en_alarma"], base)
             if getattr(self.modelos, "anticipacion", None) is not None:
                 self.reg_ant = Registro(os.path.join(self.carpeta_sesion, "anticipacion.csv"),
-                                        ["fecha", "tipo", "probabilidad", "umbral", "en_aviso"])
+                                        ["fecha", "tipo", "probabilidad", "umbral", "en_aviso"], base)
 
     # ------------------------------------------------------------------ entrada
     def recibir(self, fecha, valores):
@@ -209,6 +226,8 @@ class Motor:
             novedades += self._anticipar(w15, horas, listas)
         if getattr(self.modelos, "fugas", None) is not None:
             novedades += self._revisar_fugas(hd, horas, listas)
+        if getattr(self.modelos, "deriva", None) is not None:
+            novedades += self._revisar_deriva(w15, horas)
 
         self.pronosticos.append(pron)
         self.deteccion.append(det)
@@ -222,6 +241,27 @@ class Motor:
         limite = self.ultima_hora_procesada - pd.Timedelta(hours=self.cfg.historia_h + 2)
         self.bufer = self.bufer.loc[self.bufer.index > limite]
         return novedades
+
+    # ------------------------------------------------------------------ deriva de los datos
+    def _revisar_deriva(self, w15, horas):
+        ref = self.modelos.deriva["referencia"]
+        h = w15[[c for c in ref if c in w15]].resample("1h").mean().reindex(horas)
+        viejas = self.historia_deriva[~self.historia_deriva.index.isin(h.index)] if len(self.historia_deriva) else None
+        self.historia_deriva = pd.concat([viejas, h]).sort_index() if viejas is not None else h
+        corte = horas[-1] - pd.Timedelta(days=DIAS_DERIVA)
+        self.historia_deriva = self.historia_deriva[self.historia_deriva.index > corte]
+        if not any(x.hour == HORA_DERIVA for x in horas) and self.ultima_deriva is not None:
+            return []
+        r = deriva_.revisar(ref, self.historia_deriva)
+        self.ultima_deriva = {"hora": str(horas[-1]), "desde": str(self.historia_deriva.index.min()),
+                              "periodo_referencia": self.modelos.deriva.get("periodo"),
+                              "columnas": [{"columna": f.columna, "psi": _num(f.psi, 3), "estado": f.estado,
+                                            "horas": int(f.horas)} for f in r.itertuples()]}
+        con_deriva = r[r["estado"] == "deriva"]
+        if len(con_deriva) and any(x.hour == HORA_DERIVA for x in horas):
+            return [{"evento": "deriva", "hora": str(horas[-1]),
+                     "columnas": [(f.columna, float(f.psi)) for f in con_deriva.itertuples()]}]
+        return []
 
     # ------------------------------------------------------------------ fugas
     def _revisar_fugas(self, hd, horas, listas):

@@ -152,3 +152,38 @@ def test_sin_modelo_de_fugas_y_sensores_de_mas_se_ignoran(cfg):
     assert m.lista_fugas() == [] and m.resumen_fugas()["actual"] is None
     assert "CL2_J99" in m.bufer and m.ultima_hora_procesada == hora(6)
     assert m.estado()["sensores"] == ModelosFalsos().sensores
+
+
+def test_resultados_tambien_en_la_base_de_datos(tmp_path):
+    from conftest import configuracion
+    url = f"sqlite:///{tmp_path / 'monitoreo.db'}"
+    alto = {hora(k) for k in (5, 6, 7)}
+    modelos = ModelosFalsos(p_evento=lambda h, n: 0.95 if (n == "J10" and h in alto) else 0.1,
+                            p_fuga=lambda h: 0.9 if h in alto else 0.1)
+    m = Motor(configuracion(tmp_path, base_de_datos=url), modelos, registrar=True)
+    alimentar(m, 13)
+    m.procesar()
+    assert m.base.contar("deteccion") == 12 * len(SENSORES) == m.base.contar("pronosticos")
+    assert m.base.contar("alarmas") == 1 and m.base.contar("fugas") == 8
+    fila = pd.read_sql("SELECT * FROM fugas ORDER BY fecha", m.base.motor).iloc[2]
+    assert fila["sesion"].startswith("sesion_") and pd.Timestamp(fila["fecha"]) == hora(6) and fila["en_alarma"] == 1
+
+
+def test_deriva_de_los_datos_cada_dia(cfg):
+    from calidad_agua import deriva
+    from conftest import tabla_lecturas
+    ref_h = tabla_lecturas(80).resample("1h").mean()      # las mismas lecturas que llegan en vivo
+    ref_h["CL2_J10"] += 0.3                                 # en el "entrenamiento" el cloro era más alto
+    modelos = ModelosFalsos()
+    modelos.deriva = {"referencia": deriva.referencia(ref_h), "periodo": "prueba"}
+    m = Motor(cfg, modelos, registrar=False)
+    nov = []
+    for x in lecturas(80):
+        m.recibir(x["fecha"], x["valores"])
+        nov += m.procesar()
+    derivas = [n for n in nov if n["evento"] == "deriva"]
+    # cada día a las 06:00 desde el tercero (antes hay menos de 48 h de datos)
+    assert [n["hora"] for n in derivas] == [str(hora(54)), str(hora(78))]
+    assert [c for c, _ in derivas[0]["columnas"]] == ["CL2_J10"]
+    estados = {c["columna"]: c["estado"] for c in m.ultima_deriva["columnas"]}
+    assert estados["CL2_J10"] == "deriva" and estados["CL2_J280"] == "estable"

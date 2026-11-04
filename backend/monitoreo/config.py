@@ -9,6 +9,8 @@ Configuración del servicio. Cada valor se puede cambiar con una variable de ent
                      emisor) u "open-meteo" (pronóstico vigente, para datos en tiempo real)
   CERTIFICADO_TLS,   certificado y clave (PEM) para atender por HTTPS; rutas absolutas o
   CLAVE_TLS          relativas a la raíz del proyecto (ver monitoreo/seguridad.py)
+  BASE_DE_DATOS      URL de SQLAlchemy donde guardar también los resultados de cada hora (p. ej.
+                     postgresql://usuario:clave@servidor/monitoreo); vacía = solo los CSV
 
 Se pueden poner en el archivo .env de la raíz del proyecto (ver .env.ejemplo).
 """
@@ -53,6 +55,7 @@ class Config:
     # HTTPS (opcional): sin estas dos rutas el servicio atiende por HTTP
     certificado_tls: Optional[Path] = field(default_factory=lambda: _ruta(os.environ.get("CERTIFICADO_TLS")))
     clave_tls: Optional[Path] = field(default_factory=lambda: _ruta(os.environ.get("CLAVE_TLS")))
+    base_de_datos: Optional[str] = field(default_factory=lambda: os.environ.get("BASE_DE_DATOS") or None)
 
     @property
     def esquema(self):
