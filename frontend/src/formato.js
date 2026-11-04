@@ -11,6 +11,7 @@ export const TIPOS = {
   falla_cloro: "Falla de cloración",
   turbidez_fuente: "Turbidez en la fuente",
   falla_ph: "Falla de pH",
+  fuga: "Fuga",
 };
 
 // Decreto 38924-S (los valores exactos llegan del backend en /api/referencias)

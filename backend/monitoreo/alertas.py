@@ -44,7 +44,8 @@ import requests
 from calidad_agua import calidad, carga
 
 TIPOS = {"contaminacion": "Contaminación", "falla_cloro": "Falla de cloración",
-         "turbidez_fuente": "Turbidez en la fuente", "falla_ph": "Falla de pH", "?": "Evento sin clasificar"}
+         "turbidez_fuente": "Turbidez en la fuente", "falla_ph": "Falla de pH", "fuga": "Fuga",
+         "?": "Evento sin clasificar"}
 NOMBRE = {"CL2": "cloro", "TURB": "turbidez", "PH": "pH"}
 UNIDAD = {"CL2": " mg/L", "TURB": " UNT", "PH": ""}
 HORAS_FIN_RIESGO = 6            # horas seguidas en norma para dar por terminado un episodio de riesgo
@@ -53,6 +54,8 @@ SENALES = {"contaminacion": "lluvia fuerte reciente (suelo saturado) y horas de 
            "falla_cloro": "el cloro viene bajando en la salida de la planta",
            "turbidez_fuente": "aguacero fuerte: la crecida llega a la toma horas después",
            "falla_ph": "el pH viene desviándose en la salida de la planta",
+           "fuga": "la fuente entrega cada día un poco más de lo normal y la presión baja: una fuga pequeña "
+                   "que crece",
            "anomalia": "la operación se aparta de lo normal"}
 EMPIEZAN_EN_LA_FUENTE = {"falla_cloro", "turbidez_fuente", "falla_ph"}
 # qué hacer: cuando el evento ya se ve (alarma) y cuando se espera (aviso anticipado). Son una guía
@@ -65,6 +68,8 @@ ACCION_ALARMA = {
     "turbidez_fuente": "revisar la planta (coagulación y filtros): ajustar la dosis de coagulante y, si la "
                        "turbidez sigue sobre 5 UNT, valorar suspender la toma",
     "falla_ph": "revisar el ajuste de pH en la planta (dosificación de químicos)",
+    "fuga": "recorrer el tramo indicado buscando agua que aflora, hundimientos o reportes de abonados; "
+            "cerrar válvulas por sectores para acotarla y programar la reparación",
     "?": "revisar las lecturas de los sensores en alarma y confirmar en campo",
 }
 ACCION_AVISO = {
@@ -75,6 +80,8 @@ ACCION_AVISO = {
     "turbidez_fuente": "preparar la planta para la crecida: revisar la dosis de coagulante y los filtros y "
                        "vigilar la turbidez del agua cruda",
     "falla_ph": "revisar la dosificación de químicos de pH antes de que la deriva siga",
+    "fuga": "programar una revisión del tramo indicado y comparar el caudal mínimo de la madrugada con el "
+            "de días anteriores, antes de que la fuga crezca",
     "anomalia": "revisar las lecturas de la red y de la planta",
 }
 ACCION_RIESGO = {
