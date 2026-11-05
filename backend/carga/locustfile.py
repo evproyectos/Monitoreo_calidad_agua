@@ -6,8 +6,11 @@ Con el servicio y la API de datos corriendo (y CLAVES_API configurada), desde ba
 
     pip install locust
     set CLAVE_API=<una de las claves de CLAVES_API>          (PowerShell: $env:CLAVE_API="...")
-    locust -f carga/locustfile.py --host http://127.0.0.1:8001 --headless -u 10 -r 2 -t 5m ^
+    locust -f carga/locustfile.py --host https://127.0.0.1:8001 --headless -u 10 -r 2 -t 5m ^
            --csv ../docs/rendimiento/carga
+
+Con el servicio en HTTP (sin CERTIFICADO_TLS) el --host es http://127.0.0.1:8001. Con HTTPS no se
+verifica el certificado, porque es autofirmado.
 
 El reporte queda en docs/rendimiento/carga_stats.csv: la columna 95% es el percentil 95 de la
 latencia en ms (meta: ≤ 500 ms). URL_DATOS cambia la API de datos (por defecto la local).
@@ -16,6 +19,7 @@ latencia en ms (meta: ≤ 500 ms). URL_DATOS cambia la API de datos (por defecto
 import os
 
 import requests
+import urllib3
 from locust import HttpUser, between, events, task
 
 URL_DATOS = os.environ.get("URL_DATOS", "http://127.0.0.1:8000")
@@ -25,7 +29,7 @@ LECTURAS = {}
 
 @events.test_start.add_listener
 def cargar_lecturas(environment, **_):
-    """Una sola vez: las últimas 8 días de lecturas (lo que pide /predict/fugas)."""
+    """Una sola vez: los últimos 8 días de lecturas (lo que pide /predict/fugas)."""
     todas, desde = [], None
     while True:
         r = requests.get(f"{URL_DATOS}/lecturas", params={"desde": desde} if desde else {}, timeout=60)
@@ -41,6 +45,11 @@ def cargar_lecturas(environment, **_):
 
 class Cliente(HttpUser):
     wait_time = between(0.5, 1.5)
+
+    def on_start(self):
+        if self.host.startswith("https"):           # certificado autofirmado del servicio
+            self.client.verify = False
+            urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
     @task(3)
     def contaminacion(self):

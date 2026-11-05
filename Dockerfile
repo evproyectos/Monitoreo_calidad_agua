@@ -29,6 +29,7 @@ COPY Monitoreo_calidad_agua/backend/monitoreo backend/monitoreo
 COPY --from=dashboard /app/dist frontend/dist
 WORKDIR /app/backend
 EXPOSE 8001
+# por HTTPS si el .env trae el certificado (es autofirmado: no se verifica aquí)
 HEALTHCHECK --interval=30s --timeout=5s --start-period=120s --retries=3 \
-  CMD python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8001/health', timeout=4)"
+  CMD ["python", "-c", "import os, ssl, urllib.request as u; e = 'https' if os.environ.get('CERTIFICADO_TLS') else 'http'; u.urlopen(e + '://127.0.0.1:8001/health', timeout=4, context=ssl._create_unverified_context())"]
 CMD ["python", "-m", "monitoreo.servicio", "--host", "0.0.0.0"]

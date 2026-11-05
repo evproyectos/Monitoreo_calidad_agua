@@ -75,7 +75,9 @@ segundos. Levanta cinco servicios:
 | `db` | PostgreSQL 16 con TimescaleDB: tablas `pronosticos`, `deteccion`, `alarmas`, `anticipacion` y `fugas` (las que tienen fecha, como hipertablas) | puerto 5432 dentro de Docker |
 | `mlflow` | los experimentos de los notebooks (lee `Modelo_calidad_agua/mlflow.db`) | http://127.0.0.1:5000 |
 
-Los secretos van en el `.env` de esta carpeta, igual que sin Docker. `docker compose down` lo
+Los secretos van en el `.env` de esta carpeta, igual que sin Docker. Si el `.env` tiene
+`CERTIFICADO_TLS` y `CLAVE_TLS`, el contenedor usa los archivos de `secretos/` y el dashboard queda
+en **https**://127.0.0.1:8001. `docker compose down` lo
 apaga; `docker compose down -v` borra también la base de datos.
 
 ## Instalación
@@ -126,10 +128,21 @@ durante 5 minutos sobre `/predict/contaminacion`, `/predict/fugas` y `/api/estad
 queda en `docs/rendimiento/` (la columna 95 % es el percentil 95 de la latencia, meta ≤ 500 ms):
 
 ```
+cd backend
 pip install locust
 $env:CLAVE_API="<una de las claves de CLAVES_API>"
-locust -f carga/locustfile.py --host http://127.0.0.1:8001 --headless -u 10 -r 2 -t 5m --csv ../docs/rendimiento/carga
+locust -f carga/locustfile.py --host https://127.0.0.1:8001 --headless -u 10 -r 2 -t 5m --csv ../docs/rendimiento/carga
 ```
+
+Con el servicio en HTTP (sin certificado) el `--host` es `http://127.0.0.1:8001`.
+
+Las predicciones a pedido se atienden en procesos aparte (`monitoreo/trabajadores.py`), cada uno
+con su copia de los modelos: en un solo proceso las solicitudes hacen fila (Python ejecuta de a un
+hilo a la vez) y con 10 usuarios el percentil 95 pasaba de 5 s. `TRABAJADORES_PREDICCION` fija
+cuántos (por defecto, los núcleos menos uno, hasta 3; unos 800 MB cada uno). La prueba se corre con
+el emisor ya terminado (`docker compose ps` ya no lo muestra): con `VELOCIDAD=1` manda una hora
+simulada por segundo y el motor pasa ocupado procesándolas, cosa que en operación ocurre una vez
+por hora (`VELOCIDAD=0.000278` es el ritmo real).
 
 En GitHub, el CI (`.github/workflows/ci.yml`) corre en cada push y en cada pull request:
 estilo, pruebas con cobertura mínima de 70 % (instala `calidad_agua` desde el repositorio

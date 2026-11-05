@@ -18,6 +18,7 @@ Se elige con la variable de entorno FUENTE_PRONOSTICO.
 
 import json
 import os
+import threading
 import time
 import urllib.request
 
@@ -48,6 +49,7 @@ class PronosticoOpenMeteo:
         self.modelos, self.cada_s = list(modelos), cada_s
         self.serie, self.consultado = None, 0.0
         self.error = None
+        self._candado = threading.Lock()              # el motor y las solicitudes a pedido lo comparten
 
     def _actualizar(self):
         if self.serie is not None and time.time() - self.consultado < self.cada_s:
@@ -68,8 +70,10 @@ class PronosticoOpenMeteo:
                 self.serie = pd.Series(dtype="float32")
 
     def ventanas(self, horas):
-        self._actualizar()
-        return clima.ventanas(self.serie, horas)
+        with self._candado:
+            self._actualizar()
+            serie = self.serie
+        return clima.ventanas(serie, horas)
 
 
 def desde_entorno():

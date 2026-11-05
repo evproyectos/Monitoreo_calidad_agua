@@ -10,6 +10,7 @@ pronosticada para las próximas 24 h (monitoreo.pronostico_lluvia).
 
 import hashlib
 import os
+import threading
 from datetime import datetime
 
 import numpy as np
@@ -34,6 +35,40 @@ def firma(carpeta):
                         for f in os.listdir(carpeta) if f.endswith((".joblib", ".keras"))))
 
 
+def un_hilo(modelo):
+    """
+    Predicción en un solo hilo (n_jobs=1) en los modelos de scikit-learn que lo usan (bosques, SVM
+    calibrada...). Con n_jobs=-1, cada predicción de unas pocas filas arma y desarma un grupo de
+    hilos, que tarda más que la predicción misma, y con varias solicitudes a la vez los hilos
+    compiten entre sí. No cambia los resultados.
+    """
+    vistos = set()
+
+    def ajustar(m):
+        if m is None or id(m) in vistos:
+            return
+        vistos.add(id(m))
+        if isinstance(m, (dict, list, tuple)):
+            for h in (m.values() if isinstance(m, dict) else m):
+                ajustar(h)
+            return
+        if hasattr(m, "n_jobs"):
+            m.n_jobs = 1
+        for atributo in ("estimator", "estimator_", "base_estimator", "estimators_", "calibrated_classifiers_",
+                         "steps", "named_steps", "transformers_"):
+            hijo = getattr(m, atributo, None)
+            if isinstance(hijo, dict):
+                hijo = list(hijo.values())
+            if isinstance(hijo, (list, tuple)):
+                for h in hijo:
+                    ajustar(h[1] if isinstance(h, tuple) and len(h) > 1 else h)
+            elif hijo is not None and not isinstance(hijo, (str, int, float)):
+                ajustar(hijo)
+
+    ajustar(modelo)
+    return modelo
+
+
 def huella(ruta):
     """Identifica la versión de un archivo de modelo: SHA-256 (12 primeros) y fecha del archivo."""
     h = hashlib.sha256()
@@ -55,6 +90,8 @@ class Modelos:
                     f"No se encontró {r}. Corre los notebooks 07 y 08 del proyecto Modelo_calidad_agua.")
         p = joblib.load(ruta_p)
         d = joblib.load(ruta_d)
+        # las redes de Keras se usan de a una solicitud a la vez (lo demás se lee sin candado)
+        self.candado_redes = threading.Lock()
         # versión de cada modelo: huella del archivo y, si lo trae, el experimento de MLflow que lo generó
         self.version = {"pronostico": {**huella(ruta_p), **({"mlflow": p["mlflow"]} if "mlflow" in p else {})},
                         "detector": {**huella(ruta_d), **({"mlflow": d["mlflow"]} if "mlflow" in d else {})}}
@@ -82,7 +119,7 @@ class Modelos:
             tf.get_logger().setLevel("ERROR")              # avisos de "retracing" sin importancia
             self.redes = [keras.models.load_model(os.path.join(carpeta, f), compile=False)
                           for f in p["redes"]]
-        self.detector = d["modelo"]
+        self.detector = un_hilo(d["modelo"])
         self.columnas_detector = d["columnas"]
         self.tipicos_detector = d["tipicos"]
         self.umbral = d["umbral"]
@@ -107,6 +144,8 @@ class Modelos:
             import keras
             f["modelo"].red_ = keras.models.load_model(os.path.join(carpeta, "fugas_autoencoder.keras"),
                                                        compile=False)
+        un_hilo(f["modelo"])
+        un_hilo(f["tramo"])
         self.version["fugas"] = {**huella(ruta), "modelo": f["nombre"],
                                  **({"mlflow": f["mlflow"]} if "mlflow" in f else {})}
         self.fugas = f
@@ -118,7 +157,11 @@ class Modelos:
         """
         f = self.fugas
         X = fugas_.tabla(hd, f["normal"])[f["columnas"]]
-        p = fugas_.probabilidad(f["modelo"], X)
+        if isinstance(f["modelo"], fugas_.Autoencoder):
+            with self.candado_redes:
+                p = fugas_.probabilidad(f["modelo"], X)
+        else:
+            p = fugas_.probabilidad(f["modelo"], X)
         pt = f["tramo"].predict_proba(X.fillna(fugas_.VACIO))
         out = pd.DataFrame({"p_fuga": p, "tramo": f["tramo"].classes_[pt.argmax(axis=1)],
                             "p_tramo": pt.max(axis=1), "caudal_residuo": X["caudal_residuo_media3h"].values},
@@ -142,6 +185,8 @@ class Modelos:
             import keras
             a["redes_cargadas"] = [keras.models.load_model(os.path.join(carpeta, f"anticipacion_lstm_{k}.keras"),
                                                            compile=False) for k in range(a["redes"])]
+        else:
+            un_hilo(a["modelo"])
         self.anticipacion = a
 
     def anticipar(self, ha, horas, lluvia_mes=None):
@@ -156,7 +201,8 @@ class Modelos:
         T = T[a["columnas"]]
         if a["nombre"] == "LSTM":
             S = anticipacion.secuencias(((T - a["media"]) / a["desv"]).values, a["largo_h"])
-            pr = np.mean([r.predict(S, batch_size=2048, verbose=0) for r in a["redes_cargadas"]], axis=0)
+            with self.candado_redes:
+                pr = np.mean([r.predict(S, batch_size=2048, verbose=0) for r in a["redes_cargadas"]], axis=0)
             P = pd.DataFrame(pr, index=T.index, columns=anticipacion.CODIGOS)
         else:
             P = anticipacion.probabilidades(a["modelo"], T)
@@ -187,7 +233,8 @@ class Modelos:
             completa = idx[:, 1] >= rn.VENTANA_H - 1                 # hace falta la ventana de 48 h
             lstm = np.full((len(out), len(SALIDAS)), np.nan)
             if completa.any():
-                lstm[completa] = np.mean([rn.pronosticar(r, datos, idx[completa]) for r in self.redes], axis=0)
+                with self.candado_redes:
+                    lstm[completa] = np.mean([rn.pronosticar(r, datos, idx[completa]) for r in self.redes], axis=0)
             for k, p in enumerate(SALIDAS):
                 out[f"lstm_{p}"] = lstm[:, k]
 

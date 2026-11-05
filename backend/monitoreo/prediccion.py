@@ -21,6 +21,7 @@ caudal de más está entregando la fuente frente a lo esperado (modelo del noteb
 
 import json
 import os
+import threading
 import time
 from datetime import datetime
 from typing import Dict, List, Optional
@@ -63,8 +64,11 @@ class ErrorEntrada(Exception):
     """Datos de entrada que no sirven para predecir: se responde 422 con el detalle."""
 
     def __init__(self, error, detalles=None):
-        super().__init__(error)
+        super().__init__(error, detalles)          # los dos, para que pase intacto entre procesos
         self.error, self.detalles = error, detalles or []
+
+    def __str__(self):
+        return self.error
 
 
 def columnas_esperadas(sensores):
@@ -142,16 +146,19 @@ def nivel_riesgo(p, umbral, umbral_amarillo, fuera_ahora, fuera_24h):
     return "verde"
 
 
-def predecir(solicitud, modelos, historia_h, umbral_amarillo, candado):
+# Las predicciones a pedido no toman el candado del motor: los modelos solo se leen (la recarga
+# cambia el objeto Modelos entero, y cada solicitud usa el que recibió), así que varias solicitudes
+# se atienden a la vez aunque el motor esté procesando una hora. Las redes de Keras tienen su propio
+# candado dentro de Modelos.
+def predecir(solicitud, modelos, historia_h, umbral_amarillo):
     t0 = time.perf_counter()
     ventana, hora = validar(solicitud, modelos.orden_sensores, historia_h)
     w15 = calidad.lecturas_operativas(ventana)
     confirmar = modelos.confirmar_h
     horas_det = pd.date_range(hora - pd.Timedelta(hours=confirmar - 1), hora, freq="1h")
-    with candado:                                   # los modelos los comparte el motor en vivo
-        pron = modelos.pronosticar(variables.horario(w15), pd.DatetimeIndex([hora]))
-        hd = detector.horario(w15.loc[hora - pd.Timedelta(hours=HORAS_DETECTOR - 1):])
-        det = modelos.detectar(hd, horas_det)
+    pron = modelos.pronosticar(variables.horario(w15), pd.DatetimeIndex([hora]))
+    hd = detector.horario(w15.loc[hora - pd.Timedelta(hours=HORAS_DETECTOR - 1):])
+    det = modelos.detectar(hd, horas_det)
 
     pron = pron.set_index("nodo")
     det_ahora = det[det["fecha"] == hora].set_index("nodo")
@@ -199,7 +206,7 @@ def predecir(solicitud, modelos, historia_h, umbral_amarillo, candado):
     }
 
 
-def predecir_fugas(solicitud, modelos, historia_h, candado):
+def predecir_fugas(solicitud, modelos, historia_h):
     t0 = time.perf_counter()
     f = modelos.fugas
     if f is None:
@@ -209,8 +216,7 @@ def predecir_fugas(solicitud, modelos, historia_h, candado):
     ventana, hora = validar(solicitud, modelos.orden_sensores, max(historia_h, fugas_.HISTORIA_H))
     w15 = calidad.lecturas_operativas(ventana)
     horas = pd.date_range(hora - pd.Timedelta(hours=f["confirmar_h"] - 1), hora, freq="1h")
-    with candado:
-        F = modelos.detectar_fugas(detector.horario(w15), horas)
+    F = modelos.detectar_fugas(detector.horario(w15), horas)
     p = float(F.loc[hora, "p_fuga"])
     sobre = (F["p_fuga"] >= f["umbral"]).iloc[::-1].astype(int).cumprod().sum()
     confirmada = bool(sobre >= f["confirmar_h"])
@@ -245,8 +251,11 @@ def guardar(carpeta, resultado):
                **{k: resultado[k] for k in ("hora_evaluada", "nivel_red", "sensores_en_riesgo", "duracion_ms")},
                "modelos": {k: v["sha256"] for k, v in resultado["version_modelos"].items()},
                "probabilidades": {s["sensor"]: s["probabilidad_evento"] for s in resultado["sensores"]}}
-    with open(os.path.join(carpeta, "predicciones_api.jsonl"), "a", encoding="utf-8") as f:
+    with _CANDADO_REGISTRO, open(os.path.join(carpeta, "predicciones_api.jsonl"), "a", encoding="utf-8") as f:
         f.write(json.dumps(resumen, ensure_ascii=False) + "\n")
+
+
+_CANDADO_REGISTRO = threading.Lock()                # varias solicitudes a la vez escriben el registro
 
 
 def _num(x, dec=4):

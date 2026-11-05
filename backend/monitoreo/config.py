@@ -25,6 +25,11 @@ import calidad_agua
 RAIZ = Path(__file__).resolve().parents[2]
 
 
+def _trabajadores_por_defecto():
+    from monitoreo.trabajadores import cuantos_por_defecto
+    return cuantos_por_defecto()
+
+
 def _ruta(valor):
     """Ruta de una variable de entorno (relativa a la raíz del proyecto), o None si está vacía."""
     if not valor or not valor.strip():
@@ -56,6 +61,9 @@ class Config:
     certificado_tls: Optional[Path] = field(default_factory=lambda: _ruta(os.environ.get("CERTIFICADO_TLS")))
     clave_tls: Optional[Path] = field(default_factory=lambda: _ruta(os.environ.get("CLAVE_TLS")))
     base_de_datos: Optional[str] = field(default_factory=lambda: os.environ.get("BASE_DE_DATOS") or None)
+    # procesos que atienden /predict (monitoreo/trabajadores.py); 0 = en el proceso del servicio
+    trabajadores_prediccion: int = field(default_factory=lambda: int(
+        os.environ.get("TRABAJADORES_PREDICCION") or _trabajadores_por_defecto()))
 
     @property
     def esquema(self):

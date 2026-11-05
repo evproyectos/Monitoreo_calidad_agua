@@ -114,7 +114,8 @@ class ModelosFalsos:
 def configuracion(tmp_path, **cambios):
     """Configuración con poca historia (4 h) para que las pruebas usen pocas lecturas."""
     valores = dict(url_datos="http://datos.prueba", carpeta_modelos=tmp_path, modo_pronostico="combinado",
-                   carpeta_registros=tmp_path / "registros", historia_h=4, intervalo_consulta_s=0.02)
+                   carpeta_registros=tmp_path / "registros", historia_h=4, intervalo_consulta_s=0.02,
+                   trabajadores_prediccion=0)
     valores.update(cambios)
     return Config(**valores)
 

@@ -45,6 +45,7 @@ from monitoreo.cliente_datos import ClienteDatos
 from monitoreo.config import Config, RAIZ
 from monitoreo.modelos import Modelos, firma
 from monitoreo.motor import Motor
+from monitoreo.trabajadores import Trabajadores
 
 REVISAR_MODELOS_S = 600         # cada cuánto se revisa si hay modelos nuevos en la carpeta
 
@@ -86,6 +87,7 @@ class Servicio:
         self._parar = threading.Event()
         self.hilo = threading.Thread(target=self._ciclo, daemon=True)
         self.recargas, self.error_recarga, self._ultima_revision = [], None, time.time()
+        self.trabajadores, self.error_trabajadores = None, None
 
     def revisar_modelos(self):
         """
@@ -132,10 +134,36 @@ class Servicio:
             self._parar.wait(max(0.2, self.cfg.intervalo_consulta_s - (time.time() - t0)))
 
     def iniciar(self):
+        if self.cfg.trabajadores_prediccion > 0:
+            try:
+                self.trabajadores = Trabajadores(self.cfg.carpeta_modelos, self.cfg.modo_pronostico,
+                                                 self.cfg.trabajadores_prediccion)
+            except Exception as e:                       # sin procesos aparte: /predict en este proceso
+                self.error_trabajadores = str(e)[:200]
         self.hilo.start()
 
     def detener(self):
         self._parar.set()
+        if self.trabajadores:
+            self.trabajadores.cerrar()
+
+    def predecir(self, tipo, solicitud):
+        """
+        POST /predict: en un proceso trabajador si los hay (monitoreo/trabajadores.py), con los
+        mismos modelos que usa el motor; si no, o si el trabajador falla, en este proceso.
+        """
+        m, cfg = self.motor.modelos, self.cfg
+        if self.trabajadores:
+            try:
+                return self.trabajadores.atender(tipo, solicitud, getattr(m, "firma", None), cfg.historia_h,
+                                                 cfg.umbral_amarillo)
+            except prediccion.ErrorEntrada:
+                raise
+            except Exception as e:                       # un trabajador se cayó o no cargó los modelos
+                self.error_trabajadores = f"{type(e).__name__}: {str(e)[:200]}"
+        if tipo == "contaminacion":
+            return prediccion.predecir(solicitud, m, cfg.historia_h, cfg.umbral_amarillo)
+        return prediccion.predecir_fugas(solicitud, m, cfg.historia_h)
 
 
 def crear_app(cfg=None):
@@ -209,6 +237,8 @@ def crear_app(cfg=None):
             problemas.append(f"pronóstico de lluvia: {e['error_pronostico_lluvia']}")
         if s.error_recarga:
             problemas.append(f"modelos nuevos sin cargar: {s.error_recarga}")
+        if s.error_trabajadores:
+            problemas.append(f"/predict en el proceso del servicio: {s.error_trabajadores}")
         return {"estado": "degradado" if problemas else "ok", "problemas": problemas,
                 "version": __version__,
                 "modelos": {**m.version, "modo": m.modo,
@@ -217,6 +247,7 @@ def crear_app(cfg=None):
                 "conectado_a_datos": s.conectado,
                 "ultima_hora_procesada": e["ultima_hora_procesada"],
                 "alertas": s.alertas.canal.nombre,
+                "procesos_prediccion": s.trabajadores.cuantos if s.trabajadores else 0,
                 "recargas_de_modelos": s.recargas[-5:]}
 
     @app.post("/predict/contaminacion", dependencies=[con_clave],
@@ -232,7 +263,7 @@ def crear_app(cfg=None):
         """
         s = servicio()
         try:
-            r = prediccion.predecir(solicitud, s.motor.modelos, cfg.historia_h, cfg.umbral_amarillo, s.candado)
+            r = s.predecir("contaminacion", solicitud)
         except prediccion.ErrorEntrada as e:
             raise HTTPException(422, {"error": e.error, "detalles": e.detalles})
         prediccion.guardar(s.motor.carpeta_sesion, r)
@@ -250,7 +281,7 @@ def crear_app(cfg=None):
         """
         s = servicio()
         try:
-            return prediccion.predecir_fugas(solicitud, s.motor.modelos, cfg.historia_h, s.candado)
+            return s.predecir("fugas", solicitud)
         except prediccion.ErrorEntrada as e:
             raise HTTPException(422, {"error": e.error, "detalles": e.detalles})
 

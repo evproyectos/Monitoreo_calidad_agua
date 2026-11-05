@@ -10,12 +10,13 @@
 # Servicios:
 #   datos       API de datos de los sensores                 http://127.0.0.1:8000
 #   emisor      manda las lecturas de la prueba a la API de datos (como los sensores)
-#   monitoreo   servicio con el dashboard                    http://127.0.0.1:8001
+#   monitoreo   servicio con el dashboard                    http(s)://127.0.0.1:8001
 #   mlflow      experimentos de los notebooks                http://127.0.0.1:5000
 #   db          PostgreSQL con TimescaleDB: el servicio guarda ahí los resultados de cada hora
 #
 # Los secretos (TELEGRAM_TOKEN, CLAVES_API, ...) van en el .env de esta carpeta, que no se
-# versiona; sin él el servicio funciona igual, con las alertas en la consola.
+# versiona; sin él el servicio funciona igual, con las alertas en la consola. Si el .env tiene
+# CERTIFICADO_TLS y CLAVE_TLS, el servicio atiende por HTTPS con los archivos de secretos/.
 
 services:
   datos:
@@ -67,11 +68,12 @@ services:
       CARPETA_MODELOS: /modelos
       CARPETA_REGISTROS: /registros
       BASE_DE_DATOS: postgresql://monitoreo:${POSTGRES_PASSWORD:-monitoreo}@db:5432/monitoreo
-      URL_DASHBOARD: http://127.0.0.1:8001
     ports: ["127.0.0.1:8001:8001"]
     volumes:
       - ../Modelo_calidad_agua/modelos:/modelos:ro
       - ./backend/registros:/registros
+      # certificado de HTTPS (CERTIFICADO_TLS=secretos/certificado.pem en el .env); sin él, HTTP
+      - ./secretos:/app/secretos:ro
     depends_on:
       datos: {condition: service_healthy}
       db: {condition: service_healthy}

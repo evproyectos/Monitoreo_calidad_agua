@@ -1,7 +1,6 @@
 """Predicción a pedido (prediccion.py): validación de la entrada (422) y armado de la respuesta."""
 
 import json
-import threading
 
 import pandas as pd
 import pytest
@@ -118,7 +117,7 @@ def test_respuesta_completa(tmp_path):
     hora = INICIO + pd.Timedelta(hours=5)
     modelos = ModelosFalsos(p_evento=lambda h, n: 0.95 if n == "J10" else 0.1,
                             pronostico_24h={"J20": {"CL2": 0.2}})
-    r = prediccion.predecir(solicitud(7), modelos, HISTORIA_H, 0.5, threading.Lock())
+    r = prediccion.predecir(solicitud(7), modelos, HISTORIA_H, 0.5)
     assert r["hora_evaluada"] == str(hora) and r["fecha_pronosticada"] == str(hora + pd.Timedelta(hours=24))
     assert r["nivel_red"] == "rojo" and r["sensores_en_riesgo"] == ["J10", "J20"]
     s = {x["sensor"]: x for x in r["sensores"]}
@@ -129,7 +128,7 @@ def test_respuesta_completa(tmp_path):
     assert s["J280"]["nivel"] == "verde" and s["J280"]["pronostico_24h"]["CL2"] == s["J280"]["actual"]["CL2"]
     assert r["version_modelos"]["detector"]["sha256"] == "bbbbbbbbbbbb" and r["duracion_ms"] >= 0
     # solo los sensores pedidos
-    uno = prediccion.predecir(solicitud(7, sensores=["J20"]), modelos, HISTORIA_H, 0.5, threading.Lock())
+    uno = prediccion.predecir(solicitud(7, sensores=["J20"]), modelos, HISTORIA_H, 0.5)
     assert [x["sensor"] for x in uno["sensores"]] == ["J20"] and uno["nivel_red"] == "amarillo"
     # cada predicción queda anotada
     prediccion.guardar(tmp_path, r)
