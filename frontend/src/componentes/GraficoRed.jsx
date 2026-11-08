@@ -50,7 +50,7 @@ export function resumenRed(red, par, norma) {
 }
 
 function marcas(puntos) {
-  const horas = window.innerWidth < 700 ? ["00:00"] : ["00:00", "12:00"];
+  const horas = window.innerWidth < 700 || puntos.length > 120 ? ["00:00"] : ["00:00", "12:00"];
   return puntos.map((p) => p.fecha).filter((f) => horas.includes(f.slice(11, 16)));
 }
 

@@ -118,6 +118,25 @@ def test_aviso_anticipado_se_abre_una_vez_y_se_cierra(tmp_path, cfg):
     assert set(reg["tipo"]) == {"turbidez_fuente", "falla_cloro"} and reg["en_aviso"].sum() == 5
 
 
+def test_anticipacion_a_48_h_se_muestra_sin_avisos_propios(cfg):
+    alto = {INICIO + pd.Timedelta(hours=k) for k in (5, 6, 7)}
+    modelos = ModelosFalsos(p_anticipa=lambda h, k: 0.1, p_anticipa_48h=lambda h, k: 0.8 if h in alto else 0.2,
+                            eleccion_48h={3: (0.6, 2)})
+    m = Motor(cfg, modelos, registrar=False)
+    vistos, novedades = {}, []
+    for x in lecturas(9):
+        m.recibir(x["fecha"], x["valores"])
+        novedades += m.procesar()
+        r = m.resumen_anticipacion()
+        if r["tipos"]:
+            vistos[r["hora"]] = r["tipos"][0]["en_aviso_48h"]
+    t = m.resumen_anticipacion()["tipos"][0]
+    assert t["probabilidad"] == 0.1 and t["umbral_48h"] == 0.6
+    # confirma con 2 h seguidas sobre 0,6: en aviso a las 6:00 y 7:00
+    assert [h for h, en in vistos.items() if en] == [str(INICIO + pd.Timedelta(hours=k)) for k in (6, 7)]
+    assert not [n for n in novedades if n["evento"] == "aviso_anticipado"]      # los avisos son de 24 h
+
+
 def test_sin_modelo_de_anticipacion_no_hay_avisos(cfg):
     m = Motor(cfg, ModelosFalsos(), registrar=False)
     for x in lecturas(8):
@@ -139,6 +158,7 @@ def test_alarma_de_fuga_con_tramo(tmp_path, cfg):
     assert len(f) == 1 and f[0]["tramo"] == "J280 – J10" and f[0]["horas"] == 2 and f[0]["fin"] == str(hora(7))
     r = m.resumen_fugas()
     assert r["actual"]["en_alarma"] is False and len(r["serie"]) == 8 and sum(x["en_alarma"] for x in r["serie"]) == 2
+    assert r["serie"][0]["riesgo"] == {"J280 – J10": 0.08, "J10 – J20": 0.02}          # 0,1 × 0,8 y 0,1 × 0,2
     assert m.estado()["fugas"] and not m.estado()["fuga_activa"]
     sesion = list((tmp_path / "registros").iterdir())[0]
     assert pd.read_csv(sesion / "fugas.csv")["en_alarma"].sum() == 2

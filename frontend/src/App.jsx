@@ -1,10 +1,12 @@
 import { useEffect, useState } from "react";
 import { useConsulta } from "./api.js";
 import Encabezado from "./componentes/Encabezado.jsx";
-import RedSensores from "./componentes/RedSensores.jsx";
+import Tarjetas from "./componentes/Tarjetas.jsx";
 import DetalleSensor from "./componentes/DetalleSensor.jsx";
 import Alarmas from "./componentes/Alarmas.jsx";
-import VistaGeneral from "./componentes/VistaGeneral.jsx";
+import AlertasActivas from "./componentes/AlertasActivas.jsx";
+import VistaGeneral, { HORAS } from "./componentes/VistaGeneral.jsx";
+import { alertasActivas, resumenRed } from "./estado.js";
 
 // La vista vive en la dirección (#/general, #/fugas o #/sensor/J224): así funcionan el botón
 // de atrás del navegador y los enlaces directos a un sensor. #/fugas es la vista general (el
@@ -15,11 +17,15 @@ function leerRuta() {
   return { vista: "general", nodo: null, fugas: vista === "fugas" };
 }
 
+// Todo se vuelve a consultar solo, cada pocos segundos (RF-003.2: sin recargar, en ≤ 5 min).
 export default function App() {
   const estado = useConsulta("/api/estado", 2000);
   const sensores = useConsulta("/api/sensores", 2000);
   const alarmas = useConsulta("/api/alarmas", 3000);
   const referencias = useConsulta("/api/referencias", 60000);
+  const anticipacion = useConsulta("/api/anticipacion", 5000);
+  const fugas = useConsulta(`/api/fugas?horas=${HORAS}`, 5000);
+  const red = useConsulta(`/api/red/series?horas=${HORAS}`, 5000);
   const [ruta, setRuta] = useState(leerRuta);
   const [ultimoSensor, setUltimoSensor] = useState(null);
 
@@ -30,9 +36,10 @@ export default function App() {
   }, []);
 
   const lista = sensores.datos ?? [];
+  const norma = referencias.datos?.norma;
   const abrirSensor = (nodo) => { window.location.hash = `#/sensor/${nodo}`; };
 
-  // en la vista por sensor sin sensor elegido: el primero en alarma, el último visto o J224
+  // en la vista por sensor sin sensor elegido: el primero en alarma, el último visto o el primero
   const nodo = ruta.vista === "sensor"
     ? (lista.some((s) => s.nodo === ruta.nodo) ? ruta.nodo
       : (lista.find((s) => s.en_alarma) ?? lista.find((s) => s.nodo === ultimoSensor) ?? lista[0])?.nodo)
@@ -42,45 +49,47 @@ export default function App() {
   useEffect(() => {
     if (ruta.fugas) document.getElementById("fugas")?.scrollIntoView({ behavior: "smooth" });
   }, [ruta.fugas, lista.length]);
-  const sinServicio = Boolean(estado.error) && !estado.datos;
+
+  const sinServicio = Boolean(estado.error);
+  const alertas = norma ? alertasActivas({ estado: estado.datos, sensores: lista, norma,
+                                           anticipacion: anticipacion.datos, fugas: fugas.datos }) : [];
+  const resumen = resumenRed({ sinServicio, estado: estado.datos, sensores: lista, alertas });
+  const lateral = (
+    <aside className="lateral">
+      <AlertasActivas alertas={alertas} onAbrir={abrirSensor} />
+      <Alarmas alarmas={alarmas.datos} confirmarH={referencias.datos?.confirmar_h} onElegir={abrirSensor} />
+    </aside>
+  );
 
   return (
     <div className="app">
-      <Encabezado estado={estado.datos} sinServicio={Boolean(estado.error)} vista={ruta.vista} sensor={nodo ?? ultimoSensor} />
+      <Encabezado resumen={resumen} hora={estado.datos?.ultima_hora_procesada} vista={ruta.vista}
+                  sensor={nodo ?? ultimoSensor} />
+      {sinServicio && (
+        <p className="aviso">
+          Revisa que el servicio esté corriendo: en la carpeta backend, <code>python -m monitoreo.servicio</code>.
+          Se muestra la última información recibida.
+        </p>
+      )}
 
-      {estado.error && (
-        <div className="aviso grave">
-          No hay conexión con el servicio de monitoreo. Revisa que esté corriendo: en la carpeta backend,
-          <code> python -m monitoreo.servicio</code>.
-        </div>
-      )}
-      {estado.datos && !estado.datos.conectado_a_datos && (
-        <div className="aviso">
-          El servicio no recibe datos de los sensores. Revisa que la API de datos esté corriendo
-          ({estado.datos.error ?? "sin respuesta"}).
-        </div>
-      )}
-      {!sinServicio && !lista.length && (
-        <div className="panel" style={{ marginTop: 16 }}>
-          <p className="vacio">Esperando las primeras lecturas. Los pronósticos aparecen cuando se completa la primera hora.</p>
-        </div>
+      {lista.length > 0 && (
+        <Tarjetas sensores={lista} red={red.datos} norma={norma} fugas={fugas.datos} estado={estado.datos}
+                  elegido={ruta.vista === "sensor" ? nodo : null} onAbrir={abrirSensor} />
       )}
 
       {lista.length > 0 && ruta.vista === "general" && (
         <div className="cuerpo">
-          <VistaGeneral sensores={lista} referencias={referencias.datos} onAbrir={abrirSensor} />
-          <Alarmas alarmas={alarmas.datos} confirmarH={referencias.datos?.confirmar_h} onElegir={abrirSensor} />
+          <VistaGeneral sensores={lista} referencias={referencias.datos} red={red.datos}
+                        anticipacion={anticipacion.datos} fugas={fugas.datos} onAbrir={abrirSensor} />
+          {lateral}
         </div>
       )}
 
       {lista.length > 0 && ruta.vista === "sensor" && (
-        <>
-          <RedSensores sensores={lista} norma={referencias.datos?.norma} elegido={nodo} onElegir={abrirSensor} />
-          <div className="cuerpo">
-            <DetalleSensor sensor={sensor} referencias={referencias.datos} />
-            <Alarmas alarmas={alarmas.datos} confirmarH={referencias.datos?.confirmar_h} onElegir={abrirSensor} />
-          </div>
-        </>
+        <div className="cuerpo">
+          <DetalleSensor sensor={sensor} referencias={referencias.datos} />
+          {lateral}
+        </div>
       )}
     </div>
   );

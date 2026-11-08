@@ -1,46 +1,38 @@
-import { fechaHora, TIPOS } from "../formato.js";
+import { fechaHora } from "../formato.js";
+import { NIVELES } from "../estado.js";
 
-export default function Encabezado({ estado, sinServicio, vista, sensor }) {
-  let clase = "sin-dato";
-  let texto = "Esperando lecturas";
-  if (sinServicio) texto = "Sin conexión con el servicio";
-  else if (estado && !estado.conectado_a_datos) texto = "Sin datos de los sensores";
-  else if (estado?.alarma_activa) {
-    clase = "alarma";
-    const tipo = TIPOS[estado.alarma_abierta?.tipo_sugerido];
-    texto = `Alarma activa${tipo ? `: ${tipo.toLowerCase()}` : ""}`;
-  } else if (estado?.fuga_activa) {
-    clase = "alarma";
-    texto = "Posible fuga";
-  } else if (estado?.ultima_hora_procesada) {
-    clase = "normal";
-    texto = "Operación normal";
-  }
-
+// Marca del acueducto, las dos vistas y, debajo, el estado de toda la red en una línea con su
+// semáforo (verde, amarillo o rojo).
+export default function Encabezado({ resumen, hora, vista, sensor }) {
   return (
-    <header className="encabezado">
-      <div>
-        <h1>Monitoreo de calidad de agua</h1>
-        <div className="sub">
-          Red de distribución con {estado?.sensores ?? 3} puntos de medición de cloro, turbidez, pH y presión,
-          y el caudal de la fuente
+    <>
+      <header className="encabezado">
+        <div className="marca">
+          <svg viewBox="0 0 32 32" width="34" height="34" aria-hidden="true" className="gota">
+            <path d="M16 3c5.5 7 9 12 9 16.5A9 9 0 0 1 7 19.5C7 15 10.5 10 16 3z" />
+            <path d="M11.5 20.5a4.5 4.5 0 0 0 4.5 4.5" fill="none" strokeWidth="2" strokeLinecap="round" />
+          </svg>
+          <div>
+            <strong>ASADA La Lucha</strong>
+            <span>Alertas tempranas de calidad del agua</span>
+          </div>
         </div>
+        <nav className="vistas" aria-label="Vistas">
+          <a href="#/general" aria-current={vista === "general" ? "page" : undefined}>Toda la red</a>
+          <a href={`#/sensor/${sensor ?? ""}`} aria-current={vista === "sensor" ? "page" : undefined}>
+            {sensor ? `Sensor ${sensor}` : "Por sensor"}
+          </a>
+        </nav>
+      </header>
+
+      <div className={`resumen-red nivel-${resumen.nivel}`} role="status">
+        <span className="semaforo" aria-hidden="true"><i /><i /><i /></span>
+        <div>
+          <span className="nivel">{NIVELES[resumen.nivel].texto}</span>
+          <h1>{resumen.texto}</h1>
+        </div>
+        {hora && <span className="hora">Actualizado: {fechaHora(hora)}</span>}
       </div>
-      <nav className="vistas" aria-label="Vistas">
-        <a href="#/general" aria-current={vista === "general" ? "page" : undefined}>Vista general</a>
-        <a href={`#/sensor/${sensor ?? ""}`} aria-current={vista === "sensor" ? "page" : undefined}>
-          Por sensor{sensor ? `: ${sensor}` : ""}
-        </a>
-      </nav>
-      <div className="estado">
-        <span className="reloj">
-          Datos hasta <strong>{fechaHora(estado?.ultima_hora_procesada)}</strong>
-        </span>
-        <span className={`pastilla ${clase}`} role="status">
-          <span aria-hidden="true">{clase === "alarma" ? "▲" : "●"}</span>
-          {texto}
-        </span>
-      </div>
-    </header>
+    </>
   );
 }

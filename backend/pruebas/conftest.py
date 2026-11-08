@@ -57,7 +57,7 @@ class ModelosFalsos:
     """
 
     def __init__(self, p_evento=None, pronostico_24h=None, p_anticipa=None, eleccion=None, tipo_evento=1,
-                 p_fuga=None, tramo="J280 – J10"):
+                 p_fuga=None, tramo="J280 – J10", p_anticipa_48h=None, eleccion_48h=None):
         self.sensores = sorted(SENSORES)
         self.orden_sensores = list(SENSORES)
         self.umbral, self.confirmar_h, self.modo = 0.9, 2, "combinado"
@@ -74,6 +74,10 @@ class ModelosFalsos:
         self.anticipacion = None if p_anticipa is None else {
             "eleccion": eleccion or {3: (0.5, 1)},
             "retrasos_propagacion": pd.DataFrame({"mediana": [0.0, 2.0, 9.0]}, index=SENSORES)}
+        # a 48 h (opcional): p_anticipa_48h(hora, tipo) -> probabilidad
+        self.p_anticipa_48h = p_anticipa_48h
+        if self.anticipacion is not None and p_anticipa_48h is not None:
+            self.anticipacion.update(modelo_48h=True, eleccion_48h=eleccion_48h or {3: (0.6, 1)})
         self.pronostico_24h = pronostico_24h or {}
         self.llamadas = 0
         # fugas: p_fuga(hora) -> probabilidad; sin ella, el servicio no busca fugas
@@ -95,15 +99,21 @@ class ModelosFalsos:
                 filas.append(fila)
         return pd.DataFrame(filas)
 
-    def anticipar(self, ha, horas, lluvia_mes=None):
+    def tiene_48h(self):
+        return self.p_anticipa_48h is not None
+
+    def anticipar(self, ha, horas, lluvia_mes=None, horizonte=24):
         self.lluvia_mes = lluvia_mes
-        tipos = list(self.anticipacion["eleccion"])
-        return pd.DataFrame({k: [self.p_anticipa(h, k) for h in horas] for k in tipos}, index=pd.DatetimeIndex(horas))
+        f = self.p_anticipa_48h if horizonte == 48 else self.p_anticipa
+        tipos = list(self.anticipacion["eleccion_48h" if horizonte == 48 else "eleccion"])
+        return pd.DataFrame({k: [f(h, k) for h in horas] for k in tipos}, index=pd.DatetimeIndex(horas))
 
     def detectar_fugas(self, hd, horas):
         assert "Q_R1" in hd and all(f"P_{n}" in hd for n in SENSORES)
         return pd.DataFrame({"p_fuga": [self.p_fuga(h) for h in horas], "tramo": self.tramo, "p_tramo": 0.8,
-                             "caudal_residuo": [4.0 * self.p_fuga(h) for h in horas]}, index=pd.DatetimeIndex(horas))
+                             "caudal_residuo": [4.0 * self.p_fuga(h) for h in horas],
+                             "riesgo": [{self.tramo: 0.8 * self.p_fuga(h), "J10 – J20": 0.2 * self.p_fuga(h)}
+                                        for h in horas]}, index=pd.DatetimeIndex(horas))
 
     def detectar(self, hd, horas):
         filas = [{"fecha": hora, "nodo": n, "p_evento": self.p_evento(hora, n), "tipo": self.tipo_evento}

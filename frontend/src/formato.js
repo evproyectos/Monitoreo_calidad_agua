@@ -6,6 +6,11 @@ export const PARAMETROS = {
   PH: { nombre: "pH", unidad: "", decimales: 2 },
 };
 
+// "Falla de pH" → "falla de pH" (solo la primera letra, para usarlo dentro de una frase)
+export function enFrase(texto) {
+  return texto ? texto[0].toLowerCase() + texto.slice(1) : texto;
+}
+
 export const TIPOS = {
   contaminacion: "Contaminación",
   falla_cloro: "Falla de cloración",

@@ -189,21 +189,29 @@ Luego, en tres terminales:
 
 y abrir **http://127.0.0.1:8001**. Con `--modo arboles` el servicio corre sin TensorFlow.
 
-El dashboard tiene dos vistas:
+El dashboard cumple el RF-003.2 y se actualiza solo cada pocos segundos:
 
-- **Vista general** (`#/general`): la red completa para cloro, turbidez o pH.
-  - Panel de fugas: probabilidad de fuga de los últimos 7 días con su umbral, el tramo más
-    probable y cuánto caudal de más entrega la fuente; las alertas de fuga enlazan aquí
-    (`#/fugas`).
-  - Gráfico de la red: mediana de los sensores, la banda donde está la mayoría (del 10 %
-    al 90 %) y el sensor más extremo, en las últimas 72 h y el pronóstico de las próximas
-    24 h. Una falla general mueve toda la banda; un problema local separa al sensor extremo.
-  - Mapa de calor sensor × hora, de la fuente al extremo de la red: muestra cómo un evento
-    se propaga por la red. Los valores fuera de norma van en rojo; al tocar un sensor se
-    abre su detalle.
-- **Por sensor** (`#/sensor/J224`): la red como tubería para elegir el sensor y sus gráficos
-  en detalle (72 h observadas, pronóstico con margen de acierto, límites de la norma y
-  probabilidad de evento).
+- **Arriba, en las dos vistas:** el estado de toda la red en una línea con su semáforo (verde =
+  normal, amarillo = alerta predictiva, rojo = alerta crítica) y una tarjeta por punto de medición,
+  de la fuente al extremo, con su semáforo, el cloro actual y su curva de 7 días, la turbidez, el pH
+  y el cloro pronosticado. La última tarjeta es la de fugas. Cada tarjeta abre su sensor.
+- **A la derecha:** las **alertas activas** ordenadas por severidad y antelación (lo que ya pasa,
+  después lo anticipado a 24 h y a 48 h) y el **historial de alarmas** del detector.
+- **Vista general** (`#/general`):
+  - Gráfico de la red para cloro, turbidez o pH: mediana de los sensores, la banda donde está la
+    mayoría (del 10 % al 90 %) y el sensor más extremo, en los últimos 7 días y el pronóstico de
+    las próximas 24 h. Una falla general mueve toda la banda; un problema local separa al sensor
+    extremo.
+  - **Probabilidad de eventos** a 24 h y a 48 h por tipo, cada una con su umbral. La de 48 h
+    sale del modelo de árboles del notebook 09 y solo se muestra (los avisos y alertas son los de
+    24 h).
+  - **Riesgo de fuga por tramo**: mapa de calor tramo × hora de los últimos 7 días, donde el
+    riesgo es la probabilidad de fuga por la probabilidad de que esté en ese tramo. Las alertas de
+    fuga enlazan aquí (`#/fugas`).
+  - Mapa de calor sensor × hora, de la fuente al extremo: muestra cómo un evento se propaga por la
+    red. Los valores fuera de norma van en rojo; al tocar un sensor se abre su detalle.
+- **Por sensor** (`#/sensor/J224`): los gráficos del sensor en detalle (7 días observados,
+  pronóstico con margen de acierto, límites de la norma y probabilidad de evento).
 
 Para trabajar en el frontend con recarga automática: `npm run dev` en `frontend/` y abrir
 http://localhost:5173 (las llamadas a `/api` se redirigen al backend en el puerto 8001).

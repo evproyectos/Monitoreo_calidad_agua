@@ -98,6 +98,7 @@ class Motor:
         # estado de los avisos anticipados: por tipo, horas seguidas sobre el umbral y, si hay un
         # aviso abierto, sus datos y las horas que lleva sin aviso
         self.horas_alto_tipo = {}
+        self.horas_alto_48h = {}
         self.avisos_abiertos = {}
         self.avisos = []
         self.ultima_anticipacion = {}
@@ -353,7 +354,10 @@ class Motor:
                            "caudal_extra_Ls": _num(u["caudal_residuo"], 1)},
                 "serie": [{"fecha": str(i), "probabilidad": _num(r.p_fuga, 3),
                            "caudal_extra_Ls": _num(r.caudal_residuo, 2),
-                           "en_alarma": bool(r.en_alarma)} for i, r in t.iterrows()],
+                           "en_alarma": bool(r.en_alarma),
+                           "riesgo": ({k: _num(v, 3) for k, v in r.riesgo.items()}
+                                      if isinstance(getattr(r, "riesgo", None), dict) else None)}
+                          for i, r in t.iterrows()],
                 "fugas": self.lista_fugas(), "tramos": sorted(set(f["tramos"].values())),
                 "modelo": f["nombre"], "confirmar_h": f["confirmar_h"]}
 
@@ -368,9 +372,14 @@ class Motor:
         corte = horas[-1] - pd.Timedelta(days=DIAS_LLUVIA)
         self.lluvia_horaria = self.lluvia_horaria[self.lluvia_horaria.index > corte]
         completa = self.lluvia_horaria.reindex(pd.date_range(self.lluvia_horaria.index.min(), horas[-1], freq="1h"))
-        P = self.modelos.anticipar(ha, horas, lluvia_mes=anticipacion.lluvia_30d(completa))
+        lluvia_mes = anticipacion.lluvia_30d(completa)
+        P = self.modelos.anticipar(ha, horas, lluvia_mes=lluvia_mes)
         self.anticipaciones.append(P[P.index.isin(listas)])
         eleccion = self.modelos.anticipacion["eleccion"]
+        # a 48 h (RF-003.2 d): solo se muestra en el dashboard; los avisos y alertas son los de 24 h
+        con_48h = getattr(self.modelos, "tiene_48h", lambda: False)()
+        P48 = self.modelos.anticipar(ha, horas, lluvia_mes=lluvia_mes, horizonte=48) if con_48h else None
+        eleccion_48h = self.modelos.anticipacion.get("eleccion_48h", {}) if con_48h else {}
         novedades, filas = [], []
         for hora in horas:
             if hora not in listas:
@@ -382,6 +391,12 @@ class Motor:
                 self.horas_alto_tipo[k] = self.horas_alto_tipo.get(k, 0) + 1 if alto else 0
                 en_aviso = self.horas_alto_tipo[k] >= confirmar
                 estado[k] = {"probabilidad": p, "umbral": umbral, "en_aviso": en_aviso}
+                if k in eleccion_48h and P48 is not None and k in P48:
+                    u48, c48 = eleccion_48h[k]
+                    p48 = float(P48.loc[hora, k])
+                    alto48 = p48 == p48 and p48 >= u48
+                    self.horas_alto_48h[k] = self.horas_alto_48h.get(k, 0) + 1 if alto48 else 0
+                    estado[k].update(probabilidad_48h=p48, umbral_48h=u48, en_aviso_48h=self.horas_alto_48h[k] >= c48)
                 filas.append({"fecha": hora, "tipo": _nombre_tipo(k), "probabilidad": p, "umbral": umbral,
                               "en_aviso": en_aviso})
                 novedades += self._actualizar_aviso(hora, k, p, umbral, en_aviso)
@@ -427,7 +442,9 @@ class Motor:
             return {"hora": None, "tipos": []}
         return {"hora": str(u["hora"]),
                 "tipos": [{"tipo": _nombre_tipo(k), "probabilidad": _num(e["probabilidad"], 3),
-                           "umbral": e["umbral"], "en_aviso": e["en_aviso"]} for k, e in u["tipos"].items()]}
+                           "umbral": e["umbral"], "en_aviso": e["en_aviso"],
+                           "probabilidad_48h": _num(e.get("probabilidad_48h"), 3), "umbral_48h": e.get("umbral_48h"),
+                           "en_aviso_48h": e.get("en_aviso_48h")} for k, e in u["tipos"].items()]}
 
     def _actualizar_alarma(self, hora, en_alarma, tipos):
         a = self.alarma_abierta

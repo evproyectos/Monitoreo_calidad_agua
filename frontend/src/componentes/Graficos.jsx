@@ -6,7 +6,7 @@ import { etiquetaEje, fechaHora, numero, PARAMETROS, tolerancia } from "../forma
 
 // marcas del eje: medianoche y mediodía; en pantallas angostas, solo medianoche
 function marcas(puntos) {
-  const horas = window.innerWidth < 700 ? ["00:00"] : ["00:00", "12:00"];
+  const horas = window.innerWidth < 700 || puntos.length > 120 ? ["00:00"] : ["00:00", "12:00"];
   return puntos.map((p) => p.fecha).filter((f) => horas.includes(f.slice(11, 16)));
 }
 
@@ -41,7 +41,7 @@ export function GraficoParametro({ par, serie, referencias }) {
     <div className="grafico">
       <div className="grafico-cabeza">
         <h3>{nombre}{unidad ? ` (${unidad})` : ""}</h3>
-        <span className="nota">Últimas 72 h y pronóstico de las próximas 24 h</span>
+        <span className="nota">Últimos 7 días y pronóstico de las próximas 24 h</span>
       </div>
       <div className="lienzo">
         <ResponsiveContainer width="100%" height="100%">
@@ -93,7 +93,7 @@ export function GraficoProbabilidad({ serie, referencias }) {
       <div className="grafico-cabeza">
         <h3>Probabilidad de evento</h3>
         <span className="nota">
-          Alarma si supera {numero(umbral, 1)} durante {referencias?.confirmar_h ?? 2} horas seguidas
+          La alarma salta desde {numero(umbral, 2)}{(referencias?.confirmar_h ?? 2) === 1 ? " en una hora" : ` durante ${referencias?.confirmar_h ?? 2} horas seguidas`}
         </span>
       </div>
       <div className="lienzo bajo">

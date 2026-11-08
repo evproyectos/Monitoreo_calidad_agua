@@ -1,9 +1,9 @@
 import { useConsulta } from "../api.js";
-import { fueraDeNorma, numero, PARAMETROS, TIPOS } from "../formato.js";
+import { enFrase, fueraDeNorma, numero, PARAMETROS, TIPOS } from "../formato.js";
 import { GraficoParametro, GraficoProbabilidad } from "./Graficos.jsx";
 
 export default function DetalleSensor({ sensor, referencias }) {
-  const { datos: serie } = useConsulta(sensor ? `/api/sensores/${sensor.nodo}/serie?horas=72` : null, 3000);
+  const { datos: serie } = useConsulta(sensor ? `/api/sensores/${sensor.nodo}/serie?horas=168` : null, 3000);
 
   if (!sensor) return <section className="panel"><p className="vacio">Elige un sensor en la red para ver su detalle.</p></section>;
 
@@ -14,7 +14,7 @@ export default function DetalleSensor({ sensor, referencias }) {
           <h2>Sensor {sensor.nodo}</h2>
           <div className="sub">
             {sensor.en_alarma
-              ? `En alarma · tipo sugerido: ${TIPOS[sensor.tipo_sugerido]?.toLowerCase() ?? "sin determinar"}`
+              ? `En alarma. Tipo sugerido: ${enFrase(TIPOS[sensor.tipo_sugerido]) ?? "sin determinar"}`
               : `Cloro típico en este punto: ${numero(sensor.cloro_tipico, 2)} mg/L`}
           </div>
         </div>
@@ -34,7 +34,7 @@ export default function DetalleSensor({ sensor, referencias }) {
       {serie?.puntos?.length ? (
         <>
           <div className="claves">
-            <span><i className="linea" /> Observado (promedio horario)</span>
+            <span><i className="linea" /> Observado, últimos 7 días (promedio horario)</span>
             <span><i className="linea pron" /> Pronóstico a 24 h</span>
             <span><i className="banda" /> Margen de acierto</span>
             <span><i className="norma" /> Límites de la norma</span>

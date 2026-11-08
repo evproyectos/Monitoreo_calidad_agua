@@ -59,8 +59,8 @@ export default function MapaCalor({ red, par, sensores, norma, onAbrir }) {
       <div className="mapa-desplazable">
         <div className="mapa-rejilla" style={{ gridTemplateColumns: plantilla }} onMouseMove={mover} onMouseLeave={() => setPunta(null)}>
           {/* encabezado: tramo observado y tramo pronosticado */}
-          <span className="mapa-tramo" style={{ gridRow: 1, gridColumn: `2 / span ${pasado.length}` }}>Observado<span className="largo"> · últimas {pasado.length} h</span></span>
-          <span className="mapa-tramo pron" style={{ gridRow: 1, gridColumn: `${pasado.length + 3} / span ${futuro.length}` }}>Pronóstico<span className="largo"> · 24 h</span></span>
+          <span className="mapa-tramo" style={{ gridRow: 1, gridColumn: `2 / span ${pasado.length}` }}>Observado<span className="largo">, últimos {Math.round(pasado.length / 24)} días</span></span>
+          <span className="mapa-tramo pron" style={{ gridRow: 1, gridColumn: `${pasado.length + 3} / span ${futuro.length}` }}>Pronóstico<span className="largo">, 24 h</span></span>
 
           {orden.map((s, k) => {
             const est = estadoSensor(s, norma);

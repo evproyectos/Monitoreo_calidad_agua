@@ -163,9 +163,12 @@ class Modelos:
         else:
             p = fugas_.probabilidad(f["modelo"], X)
         pt = f["tramo"].predict_proba(X.fillna(fugas_.VACIO))
-        out = pd.DataFrame({"p_fuga": p, "tramo": f["tramo"].classes_[pt.argmax(axis=1)],
+        clases = f["tramo"].classes_
+        out = pd.DataFrame({"p_fuga": p, "tramo": clases[pt.argmax(axis=1)],
                             "p_tramo": pt.max(axis=1), "caudal_residuo": X["caudal_residuo_media3h"].values},
                            index=hd.index)
+        # riesgo de cada tramo: probabilidad de fuga × probabilidad de que esté en ese tramo (RF-003.2 e)
+        out["riesgo"] = [dict(zip(clases, map(float, np.asarray(pk) * pf))) for pf, pk in zip(p, pt)]
         return out.reindex(pd.DatetimeIndex(horas))
 
     # ------------------------------------------------------------------ anticipación (opcional)
@@ -187,18 +190,36 @@ class Modelos:
                                                            compile=False) for k in range(a["redes"])]
         else:
             un_hilo(a["modelo"])
+        if a.get("modelo_48h"):
+            un_hilo(a["modelo_48h"])
         self.anticipacion = a
 
-    def anticipar(self, ha, horas, lluvia_mes=None):
-        """
-        Probabilidad de que empiece cada tipo de evento en las próximas 24 h, por hora de `horas`
-        (tabla horas × tipo; 0 = anomalía si el modelo es el Isolation Forest). `ha` es
-        anticipacion.horario; `lluvia_mes`, la lluvia de 30 días (anticipacion.lluvia_30d).
-        """
+    def _tabla_anticipacion(self, ha, lluvia_mes):
+        # la misma tabla sirve para 24 y 48 h: se guarda la última (con las mismas entradas)
+        c = getattr(self, "_ultima_tabla_ant", None)
+        if c is not None and c[0] is ha and c[1] is lluvia_mes:
+            return c[2]
         a = self.anticipacion
         T, _ = anticipacion.tabla(ha, tipicos=a["tipicos"], pronostico=self.pronostico.ventanas(ha.index),
                                   lluvia_mes=lluvia_mes)
         T = T[a["columnas"]]
+        self._ultima_tabla_ant = (ha, lluvia_mes, T)
+        return T
+
+    def tiene_48h(self):
+        return bool(self.anticipacion and self.anticipacion.get("modelo_48h"))
+
+    def anticipar(self, ha, horas, lluvia_mes=None, horizonte=24):
+        """
+        Probabilidad de que empiece cada tipo de evento en las próximas 24 h (o 48 h con
+        `horizonte=48`, si el notebook 09 guardó ese modelo), por hora de `horas` (tabla horas ×
+        tipo; 0 = anomalía si el modelo es el Isolation Forest). `ha` es anticipacion.horario;
+        `lluvia_mes`, la lluvia de 30 días (anticipacion.lluvia_30d).
+        """
+        a = self.anticipacion
+        T = self._tabla_anticipacion(ha, lluvia_mes)
+        if horizonte == 48:
+            return anticipacion.probabilidades(a["modelo_48h"], T).reindex(pd.DatetimeIndex(horas))
         if a["nombre"] == "LSTM":
             S = anticipacion.secuencias(((T - a["media"]) / a["desv"]).values, a["largo_h"])
             with self.candado_redes:
