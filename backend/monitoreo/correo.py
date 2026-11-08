@@ -73,9 +73,10 @@ def _texto_plano(texto):
     return html.unescape(re.sub(r"</?b>", "", texto))
 
 
-def cuerpo_html(texto, nivel, url=None):
+def cuerpo_html(texto, nivel, url=None, alerta=None):
     """El mensaje de la alerta (el mismo de Telegram: líneas con <b> y texto ya escapado) como
-    correo HTML sencillo, con estilos en línea para que se vea igual en Gmail, Outlook y el celular."""
+    correo HTML sencillo, con estilos en línea para que se vea igual en Gmail, Outlook y el celular.
+    Con `alerta` (su dirección en el tablero), el botón lleva a atenderla."""
     lineas = texto.split("\n")
     titulo, resto = lineas[0], lineas[1:]
     enlace = url
@@ -98,9 +99,11 @@ def cuerpo_html(texto, nivel, url=None):
         if ln.strip():
             partes.append(f'<p style="margin:0 0 10px">{ln}</p>')
     cerrar_lista()
+    enlace = alerta or enlace
     boton = (f'<p style="margin:18px 0 6px"><a href="{html.escape(enlace, quote=True)}" '
              'style="background:#0b5cad;color:#ffffff;text-decoration:none;padding:10px 18px;'
-             'border-radius:8px;font-weight:700;display:inline-block">Abrir el tablero</a></p>') if enlace else ""
+             'border-radius:8px;font-weight:700;display:inline-block">'
+             f'{"Ver y atender la alerta" if alerta else "Abrir el tablero"}</a></p>') if enlace else ""
     return (
         '<!doctype html><html lang="es"><body style="margin:0;padding:16px;background:#f2f5f8">'
         '<div style="max-width:620px;margin:0 auto;background:#ffffff;border-radius:12px;overflow:hidden;'
@@ -163,7 +166,8 @@ class CanalCorreo:
         m["To"] = para
         m["Message-ID"] = make_msgid(domain=self.remitente.split("@")[-1])
         m.set_content(_texto_plano(aviso.texto))
-        m.add_alternative(cuerpo_html(aviso.texto, aviso.nivel, self.url), subtype="html")
+        m.add_alternative(cuerpo_html(aviso.texto, aviso.nivel, self.url, getattr(aviso, "enlace", None)),
+                          subtype="html")
         return m
 
     def enviar(self, aviso):

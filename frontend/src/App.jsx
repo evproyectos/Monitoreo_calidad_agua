@@ -8,15 +8,17 @@ import AlertasActivas from "./componentes/AlertasActivas.jsx";
 import VistaGeneral, { HORAS } from "./componentes/VistaGeneral.jsx";
 import Usuarios from "./componentes/Usuarios.jsx";
 import Cuenta from "./componentes/Cuenta.jsx";
+import GestionAlertas from "./componentes/GestionAlertas.jsx";
 import { alertasActivas, resumenRed } from "./estado.js";
 
-// La vista vive en la dirección (#/general, #/fugas o #/sensor/J224): así funcionan el botón
-// de atrás del navegador y los enlaces directos a un sensor. #/fugas es la vista general (el
-// enlace de las alertas de fuga), que lleva al panel de fugas.
+// La vista vive en la dirección (#/general, #/fugas, #/sensor/J224 o #/alertas/12): así funcionan
+// el botón de atrás del navegador y los enlaces directos a un sensor o a una alerta (los del correo).
+// #/fugas es la vista general (el enlace de las alertas de fuga), que lleva al panel de fugas.
 function leerRuta() {
   const [, vista, nodo] = window.location.hash.replace(/^#\/?/, "/").split("/");
   if (vista === "sensor") return { vista: "sensor", nodo: nodo || null };
   if (vista === "usuarios" || vista === "cuenta") return { vista, nodo: null };
+  if (vista === "alertas") return { vista, nodo: null, alerta: nodo || null };
   return { vista: "general", nodo: null, fugas: vista === "fugas" };
 }
 
@@ -29,6 +31,7 @@ export default function App({ sesion, onSalir, onActualizar }) {
   const anticipacion = useConsulta("/api/anticipacion", 5000);
   const fugas = useConsulta(`/api/fugas?horas=${HORAS}`, 5000);
   const red = useConsulta(`/api/red/series?horas=${HORAS}`, 5000);
+  const indicadores = useConsulta("/api/alertas/indicadores", 15000);
   const [ruta, setRuta] = useState(leerRuta);
   const [ultimoSensor, setUltimoSensor] = useState(null);
 
@@ -62,7 +65,7 @@ export default function App({ sesion, onSalir, onActualizar }) {
   const resumen = resumenRed({ sinServicio, estado: estado.datos, sensores: lista, alertas });
   const lateral = (
     <aside className="lateral">
-      <AlertasActivas alertas={alertas} onAbrir={abrirSensor} />
+      <AlertasActivas alertas={alertas} onAbrir={abrirSensor} pendientes={indicadores.datos?.pendientes} />
       <Alarmas alarmas={alarmas.datos} confirmarH={referencias.datos?.confirmar_h} onElegir={abrirSensor} />
     </aside>
   );
@@ -70,7 +73,8 @@ export default function App({ sesion, onSalir, onActualizar }) {
   return (
     <div className="app">
       <Encabezado resumen={resumen} hora={estado.datos?.ultima_hora_procesada} vista={vista}
-                  sensor={nodo ?? ultimoSensor} sesion={sesion} onSalir={onSalir} />
+                  sensor={nodo ?? ultimoSensor} sesion={sesion} onSalir={onSalir}
+                  sinAtender={indicadores.datos?.nuevas ?? 0} />
       {sinServicio && (
         <p className="aviso">
           Revisa que el servicio esté corriendo: en la carpeta backend, <code>python -m monitoreo.servicio</code>.
@@ -79,6 +83,11 @@ export default function App({ sesion, onSalir, onActualizar }) {
       )}
 
       {vista === "usuarios" && <div className="cuerpo-admin"><Usuarios yo={sesion.usuario} /></div>}
+      {vista === "alertas" && (
+        <div className="cuerpo-admin">
+          <GestionAlertas id={ruta.alerta} sesion={sesion} nodos={lista.map((s) => s.nodo)} indicadores={indicadores} />
+        </div>
+      )}
       {vista === "cuenta" && (
         <div className="cuerpo-admin"><Cuenta usuario={sesion.usuario} onListo={onActualizar} /></div>
       )}

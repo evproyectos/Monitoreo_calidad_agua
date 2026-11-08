@@ -46,8 +46,8 @@ def al(monkeypatch):
 def sin_hilo(a):
     """Los mensajes quedan en a.textos y, con su nivel y asunto, en a.avisos."""
     a.textos, a.avisos = [], []
-    a.avisar = lambda texto, nivel="rojo", asunto=None: (a.textos.append(texto),
-                                                         a.avisos.append(alertas.Aviso(texto, nivel, asunto)))
+    a.avisar = lambda texto, nivel="rojo", asunto=None, enlace=None: (
+        a.textos.append(texto), a.avisos.append(alertas.Aviso(texto, nivel, asunto, enlace=enlace)))
     return a
 
 

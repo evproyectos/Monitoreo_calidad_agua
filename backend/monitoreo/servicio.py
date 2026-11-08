@@ -42,6 +42,7 @@ from starlette.concurrency import run_in_threadpool
 from calidad_agua import calidad, metas
 
 from monitoreo import __version__, prediccion, seguridad
+from monitoreo import gestion as gestion_
 from monitoreo import usuarios as usuarios_
 from monitoreo.alertas import Alertas
 from monitoreo.cliente_datos import ClienteDatos
@@ -84,6 +85,15 @@ class CambiosUsuario(BaseModel):
     contrasena: str | None = None
 
 
+class Nota(BaseModel):
+    texto: str
+
+
+class Cierre(BaseModel):
+    resultado: str
+    observaciones: str
+
+
 SIN_SESION = {"id": 0, "nombre": "Sin inicio de sesión", "correo": None, "rol": "administrador",
               "rol_nombre": "Administrador", "activo": True, "debe_cambiar": False}
 
@@ -97,7 +107,8 @@ def _instalar_sesiones(app, cfg, cuentas):
     """
     Inicio de sesión del dashboard. Todo /api/... pide una sesión vigente (cookie), salvo
     /api/sesion (entrar, salir y ver quién está). /api/usuarios, /api/bitacora y /api/notificaciones
-    son solo para el rol administrador. Con una contraseña temporal solo se puede cambiarla. /health,
+    son solo para el rol administrador; reconocer, anotar y cerrar alertas (POST /api/alertas/...), para
+    el operador y el administrador. Con una contraseña temporal solo se puede cambiarla. /health,
     la página del dashboard y /predict (con su clave de API) no cambian. Con INICIO_SESION=no queda todo abierto.
     """
     cache, candado = {}, threading.Lock()
@@ -142,6 +153,8 @@ def _instalar_sesiones(app, cfg, cuentas):
             if ruta.startswith(("/api/usuarios", "/api/bitacora", "/api/notificaciones")) \
                     and u["rol"] != "administrador":
                 return error(403, "Esta sección es solo para el administrador.")
+            if ruta.startswith("/api/alertas/") and request.method == "POST" and not _permisos(u)["atender_alertas"]:
+                return error(403, "Solo el operador técnico y el administrador atienden las alertas.")
             request.state.usuario = u
         return await call_next(request)
 
@@ -216,6 +229,51 @@ def _instalar_sesiones(app, cfg, cuentas):
         return cuentas.ver_bitacora(max(1, min(limite, 500)))
 
 
+def _instalar_gestion(app, gestion):
+    """Gestión de las alertas (CU-06): la lista y el detalle para todos; reconocer, anotar y cerrar
+    para el operador y el administrador (lo controla el middleware de sesión)."""
+
+    def quien(request):
+        u = request.state.usuario
+        return {"correo": u["correo"] or "sin_sesion", "nombre": u["nombre"]}
+
+    def hacer(f, *args):
+        try:
+            return f(*args)
+        except gestion_.ErrorGestion as e:
+            raise HTTPException(e.codigo, {"error": e.mensaje})
+
+    @app.get("/api/alertas")
+    def ver_alertas(estado: str | None = None, tipo: str | None = None, nodo: str | None = None,
+                    desde: str | None = None, hasta: str | None = None, limite: int = 200):
+        """Alertas para atender, filtrables por estado (nueva, en_atencion, cerrada o pendientes), tipo
+        (alarma, fuga, aviso o riesgo), nodo y fecha de inicio (AAAA-MM-DD). Primero lo pendiente."""
+        try:
+            return gestion.lista(estado, tipo, nodo, desde, hasta, max(1, min(limite, 500)))
+        except ValueError:
+            raise HTTPException(422, {"error": "Las fechas van como AAAA-MM-DD."})
+
+    @app.get("/api/alertas/indicadores")
+    def ver_indicadores(dias: int = 30):
+        return gestion.indicadores(max(1, min(dias, 365)))
+
+    @app.get("/api/alertas/{uid}")
+    def ver_alerta(uid: int):
+        return hacer(gestion.detalle, uid)
+
+    @app.post("/api/alertas/{uid}/reconocer", responses={409: {"description": "Cerrada o ya la atiende otra persona"}})
+    def reconocer(uid: int, request: Request):
+        return hacer(gestion.reconocer, uid, quien(request))
+
+    @app.post("/api/alertas/{uid}/notas")
+    def anotar(uid: int, datos: Nota, request: Request):
+        return hacer(gestion.nota, uid, quien(request), datos.texto)
+
+    @app.post("/api/alertas/{uid}/cerrar")
+    def cerrar(uid: int, datos: Cierre, request: Request):
+        return hacer(gestion.cerrar, uid, quien(request), datos.resultado, datos.observaciones)
+
+
 def silenciar_cortes(loop):
     """
     En Windows, asyncio imprime un error largo (ConnectionResetError, WinError 10054) cada vez que un
@@ -239,14 +297,14 @@ def silenciar_cortes(loop):
 class Servicio:
     """El motor más el ciclo en segundo plano que lo alimenta desde la API de datos."""
 
-    def __init__(self, cfg, cuentas=None):
+    def __init__(self, cfg, cuentas=None, gestion=None):
         self.cfg = cfg
         self.motor = Motor(cfg)
         self.cliente = ClienteDatos(cfg.url_datos)
         # correo (SMTP) y Telegram si están configurados; si no, consola. Los destinatarios del correo
         # son los usuarios marcados en la página Usuarios, y cada envío queda en la tabla notificaciones
         self.alertas = Alertas(destinatarios=cuentas.destinatarios if cuentas else None,
-                               registro=cuentas.anotar_notificacion if cuentas else None)
+                               registro=cuentas.anotar_notificacion if cuentas else None, gestion=gestion)
         self.candado = threading.Lock()
         self.conectado = False
         self.ultimo_error = None
@@ -341,7 +399,7 @@ def crear_app(cfg=None):
     async def ciclo_de_vida(_app):
         silenciar_cortes(asyncio.get_running_loop())
         print("Cargando modelos...")
-        estado["s"] = Servicio(cfg, cuentas)
+        estado["s"] = Servicio(cfg, cuentas, gestion)
         estado["s"].iniciar()
         print(f"Servicio de monitoreo listo · modo {cfg.modo_pronostico} · datos desde {cfg.url_datos}")
         al = estado["s"].alertas
@@ -361,7 +419,9 @@ def crear_app(cfg=None):
     if cfg.inicio_sesion and not cuentas.hay_usuarios():
         print("Todavía no hay usuarios del dashboard. Crea el primer administrador (desde backend/):\n"
               '  python -m monitoreo.usuarios --crear-admin correo@asada.cr "Nombre"', flush=True)
+    gestion = gestion_.GestionAlertas(cfg.base_usuarios)
     _instalar_sesiones(app, cfg, cuentas)
+    _instalar_gestion(app, gestion)
     # en desarrollo el dashboard corre en el servidor de Vite (puerto 5173)
     app.add_middleware(CORSMiddleware, allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
                        allow_methods=["GET"], allow_headers=["*"])

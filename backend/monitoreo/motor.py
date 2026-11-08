@@ -421,6 +421,7 @@ class Motor:
             if a["sin_aviso"] >= HORAS_FIN_AVISO:
                 self.avisos.append(self._aviso_json(a))
                 del self.avisos_abiertos[k]
+                return [{"evento": "aviso_terminado", "id": a["id"], "tipo": a["tipo"], "hora": str(hora)}]
         return []
 
     @staticmethod

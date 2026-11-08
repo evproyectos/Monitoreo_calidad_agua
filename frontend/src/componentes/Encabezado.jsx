@@ -2,9 +2,10 @@ import { fechaHora } from "../formato.js";
 import { NIVELES } from "../estado.js";
 import { Marca } from "./InicioSesion.jsx";
 
-// Marca del acueducto, las vistas (Usuarios solo para el administrador), quién tiene la sesión y,
-// debajo, el estado de toda la red en una línea con su semáforo (verde, amarillo o rojo).
-export default function Encabezado({ resumen, hora, vista, sensor, sesion, onSalir }) {
+// Marca del acueducto, las vistas (Alertas, con cuántas faltan por atender; Usuarios solo para el
+// administrador), quién tiene la sesión y, debajo, el estado de toda la red en una línea con su
+// semáforo (verde, amarillo o rojo).
+export default function Encabezado({ resumen, hora, vista, sensor, sesion, onSalir, sinAtender = 0 }) {
   const u = sesion.usuario;
   return (
     <>
@@ -14,6 +15,9 @@ export default function Encabezado({ resumen, hora, vista, sensor, sesion, onSal
           <a href="#/general" aria-current={vista === "general" ? "page" : undefined}>Toda la red</a>
           <a href={`#/sensor/${sensor ?? ""}`} aria-current={vista === "sensor" ? "page" : undefined}>
             {sensor ? `Sensor ${sensor}` : "Por sensor"}
+          </a>
+          <a href="#/alertas" aria-current={vista === "alertas" ? "page" : undefined}>
+            Alertas{sinAtender > 0 && <span className="insignia" aria-label={`${sinAtender} sin atender`}>{sinAtender}</span>}
           </a>
           {sesion.permisos.gestionar_usuarios && sesion.inicio_sesion && (
             <a href="#/usuarios" aria-current={vista === "usuarios" ? "page" : undefined}>Usuarios</a>

@@ -35,6 +35,7 @@ backend/
     prediccion.py      POST /predict/contaminacion y /predict/fugas: predicción con lecturas que manda el cliente
     seguridad.py       clave de API, registro de accesos rechazados y HTTPS (TLS 1.2 o más)
     usuarios.py        inicio de sesión, roles, usuarios y bitácora del dashboard (CU-00, CU-07)
+    gestion.py         gestión de las alertas: reconocer, atender y cerrar con su resultado (CU-06)
     trabajadores.py    /predict en procesos aparte, para atender a varios usuarios a la vez
     base_datos.py      resultados de cada hora también en una base de datos (PostgreSQL/TimescaleDB)
     probar_prediccion.py  prueba de ese endpoint: latencia p95, errores 422 y mismos números
@@ -46,11 +47,11 @@ backend/
 frontend/              dashboard en React (Vite + Recharts)
   src/
     Sesion.jsx         inicio de sesión, contraseña temporal y después el dashboard
-    App.jsx            páginas: #/general, #/sensor/J224, #/usuarios (administrador) y #/cuenta
+    App.jsx            páginas: #/general, #/sensor/J224, #/alertas/12, #/usuarios (administrador) y #/cuenta
     estado.js          semáforo y alertas activas ordenadas por severidad y antelación
     componentes/       Encabezado, Tarjetas, AlertasActivas, VistaGeneral, Anticipacion, Fugas,
                        GraficoRed, MapaCalor, DetalleSensor, Graficos, Alarmas, InicioSesion,
-                       Cuenta, Usuarios
+                       Cuenta, Usuarios, CorreoAlertas, GestionAlertas
     api.js             consultas periódicas al backend y aviso cuando vence la sesión
     formato.js         etiquetas, norma, tolerancias, formato de números y fechas
     estilos.css        colores (modo claro y oscuro), tipografía y diseño
@@ -78,7 +79,7 @@ segundos. Levanta cinco servicios:
 | `datos` | API de datos de los sensores (`Simulador_sensor/tiempo_real`) | http://127.0.0.1:8000 |
 | `emisor` | manda las lecturas de la prueba como si fueran los sensores (31 días de precarga y después 1 h simulada por segundo; `VELOCIDAD=4 docker compose up` lo acelera) | — |
 | `monitoreo` | servicio con el dashboard, que guarda los resultados de cada hora también en la base de datos | http://127.0.0.1:8001 |
-| `db` | PostgreSQL 16 con TimescaleDB: tablas `pronosticos`, `deteccion`, `alarmas`, `anticipacion` y `fugas` (las que tienen fecha, como hipertablas), y `usuarios`, `sesiones`, `bitacora` y `notificaciones` del dashboard | puerto 5432 dentro de Docker |
+| `db` | PostgreSQL 16 con TimescaleDB: tablas `pronosticos`, `deteccion`, `alarmas`, `anticipacion` y `fugas` (las que tienen fecha, como hipertablas), y `usuarios`, `sesiones`, `bitacora`, `notificaciones`, `alertas` y `alertas_historial` del dashboard | puerto 5432 dentro de Docker |
 | `mlflow` | los experimentos de los notebooks (lee `Modelo_calidad_agua/mlflow.db`) | http://127.0.0.1:5000 |
 | `mailpit` | solo con `docker compose --profile correo up --build`: servidor de correo de prueba que recibe los correos de las alertas sin mandarlos a nadie y los muestra en una página (ver **Alertas por correo**) | http://127.0.0.1:8025 |
 
@@ -358,8 +359,8 @@ El dashboard pide correo y contraseña (CU-00). Cada usuario tiene un rol:
 | Rol | Qué puede hacer |
 |---|---|
 | Junta Directiva | ver el tablero |
-| Operador técnico | ver el tablero (y, más adelante, atender las alertas) |
-| Administrador | lo anterior, y en **Usuarios**: crear, editar y desactivar usuarios, cambiarles el rol, restablecer su contraseña, elegir quién recibe por correo las alertas críticas y las predictivas, y ver la bitácora de accesos y cambios (CU-07) |
+| Operador técnico | ver el tablero y atender las alertas (CU-06) |
+| Administrador | lo anterior (también atiende alertas), y en **Usuarios**: crear, editar y desactivar usuarios, cambiarles el rol, restablecer su contraseña, elegir quién recibe por correo las alertas críticas y las predictivas, y ver la bitácora de accesos y cambios (CU-07) |
 
 - **El primer administrador** se crea desde la consola, en `backend/`:
   `python -m monitoreo.usuarios --crear-admin correo@asada.cr "Nombre Apellido"`. Los demás los
@@ -376,6 +377,31 @@ El dashboard pide correo y contraseña (CU-00). Cada usuario tiene un rol:
   correo y origen. Se ve en **Usuarios**.
 - `INICIO_SESION=no` en el `.env` deja el dashboard abierto, solo para desarrollo.
 
+### Gestión de alertas
+
+Cada alarma, posible fuga, aviso anticipado o riesgo en 24 h queda como una **alerta** en la
+página **Alertas** del tablero (CU-06), hasta que alguien la cierre. La pestaña muestra cuántas
+faltan por atender, y el botón de cada correo lleva directo a su alerta.
+
+1. **Nueva:** la crea el sistema con el tipo de evento, dónde, la probabilidad, la antelación, las
+   lecturas y qué hacer.
+2. **En atención:** un operador o el administrador la **reconoce** y queda como responsable. Si ya
+   la atiende otra persona, el sistema dice quién y deja agregar observaciones.
+3. Se van anotando **las acciones realizadas y lo que se encontró en campo**.
+4. **Cerrada:** con su **resultado** (confirmada, falso positivo o inconclusa) y las observaciones,
+   que son obligatorias. Las inconclusas no cuentan para evaluar el modelo.
+
+- **Sin duplicados:** mientras una alerta del mismo tipo y lugar siga activa, no se crea otra ni
+  se reenvía el correo: se actualiza su probabilidad. Al reiniciar el servicio tampoco se repiten.
+- **Se resuelve sola** (RF-003.3): un aviso predictivo (amarillo) que nadie tomó se cierra solo
+  cuando el riesgo baja del umbral. Una alerta roja que terminó sigue esperando a que alguien
+  diga qué pasó.
+- **Historial inmutable:** cada paso (creada, tomada, observación, terminó, cerrada) queda con
+  fecha y persona; nunca se modifica ni se borra.
+- **Filtros:** estado, tipo, nodo y fechas. Arriba se ve lo pendiente y qué porcentaje de las
+  verificadas en campo resultó un evento real: es el insumo para validar el modelo (RF-004.1).
+- La Junta Directiva las ve, pero solo el operador técnico y el administrador las atienden.
+
 ### API del servicio (puerto 8001)
 
 | Ruta | Qué devuelve |
@@ -386,6 +412,8 @@ El dashboard pide correo y contraseña (CU-00). Cada usuario tiene un rol:
 | `POST /api/sesion/contrasena` | cambia la contraseña propia: `{"actual", "nueva"}` |
 | `GET, POST /api/usuarios`, `PATCH /api/usuarios/{id}` | solo administrador: lista, crea y modifica usuarios (nombre, rol, activo, notificaciones, contraseña temporal) |
 | `GET /api/bitacora?limite=100` | solo administrador: accesos y cambios, el más reciente primero |
+| `GET /api/alertas?estado=pendientes&tipo=&nodo=&desde=&hasta=` | alertas para atender (estado `nueva`, `en_atencion`, `cerrada` o `pendientes`; tipo `alarma`, `fuga`, `aviso` o `riesgo`; fechas AAAA-MM-DD), lo pendiente primero. `GET /api/alertas/{id}` da el detalle con el historial y `GET /api/alertas/indicadores`, lo pendiente y los resultados de los últimos 30 días |
+| `POST /api/alertas/{id}/reconocer`, `/notas` y `/cerrar` | operador o administrador: tomar la alerta, agregar `{"texto"}` y cerrarla con `{"resultado", "observaciones"}` (409 si ya está cerrada o la atiende otra persona) |
 | `GET /api/notificaciones?limite=30` | solo administrador: si el correo está configurado, cuántas personas reciben cada nivel y los últimos envíos por correo y Telegram |
 | `POST /api/notificaciones/prueba` | solo administrador: manda un correo de prueba a quien lo pide (409 si no hay SMTP; 502 con el motivo si el servidor no lo acepta) |
 | `GET /api/estado` | hora de los datos, conexión, alarma activa, modo de pronóstico, estado de las alertas. Desde aquí, todo `/api/...` pide la sesión (401 sin ella) |

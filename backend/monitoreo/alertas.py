@@ -182,10 +182,11 @@ def _nodos(nodos, maximo=1):
 
 class Aviso:
     """Un mensaje con su nivel (rojo, amarillo, resumen o prueba) y su asunto. `para` fija los
-    destinatarios del correo (solo en la prueba); si no, salen del nivel."""
+    destinatarios del correo (solo en la prueba); si no, salen del nivel. `enlace` es la alerta en el
+    tablero (el botón del correo)."""
 
-    def __init__(self, texto, nivel="rojo", asunto=None, para=None):
-        self.texto, self.nivel, self.para = texto, nivel, para
+    def __init__(self, texto, nivel="rojo", asunto=None, para=None, enlace=None):
+        self.texto, self.nivel, self.para, self.enlace = texto, nivel, para, enlace
         self.asunto = asunto or _texto_plano(texto.split("\n")[0])
         self.pendientes, self.entregados = None, []            # para los reintentos del correo
 
@@ -294,15 +295,17 @@ class _Envio:
 
 # ---------------------------------------------------------------------------- alertas
 class Alertas:
-    def __init__(self, canal=None, canales=None, destinatarios=None, registro=None):
-        """`destinatarios(nivel)` da los correos de un nivel (Usuarios.destinatarios) y `registro(...)`
-        anota cada envío (Usuarios.anotar_notificacion)."""
+    def __init__(self, canal=None, canales=None, destinatarios=None, registro=None, gestion=None):
+        """`destinatarios(nivel)` da los correos de un nivel (Usuarios.destinatarios), `registro(...)`
+        anota cada envío (Usuarios.anotar_notificacion) y `gestion` (GestionAlertas) guarda cada alerta
+        para atenderla (CU-06): una alerta que ya existía no se vuelve a notificar."""
         self.con_riesgo = os.environ.get("ALERTAS_RIESGO", "1") != "0"
         self.con_anticipacion = os.environ.get("ALERTAS_ANTICIPACION", "1") != "0"
         self.hora_resumen = int(os.environ.get("ALERTAS_RESUMEN_HORA", "7"))
         self.url = os.environ.get("URL_DASHBOARD", "http://127.0.0.1:8001").rstrip("/")
         self.canales = canales or ([canal] if canal else canales_desde_entorno(destinatarios, self.url))
         self.riesgo = {}                    # (sensor, parámetro) -> horas seguidas en norma (episodio abierto)
+        self.gestion = gestion
         self._envios = [_Envio(c, registro) for c in self.canales]
 
     @property
@@ -331,9 +334,39 @@ class Alertas:
                 "resumen_hora": self.hora_resumen if self.hora_resumen >= 0 else None,
                 "canales": {e.canal.nombre: e.estado() for e in self._envios}}
 
-    def avisar(self, texto, nivel="rojo", asunto=None):
+    def avisar(self, texto, nivel="rojo", asunto=None, enlace=None):
         for e in self._envios:
-            e.cola.put(Aviso(texto, nivel, asunto))         # un aviso por canal: cada uno lleva sus pendientes
+            e.cola.put(Aviso(texto, nivel, asunto, enlace=enlace))   # uno por canal: cada uno con sus pendientes
+
+    def _alerta(self, texto, nivel, asunto, **datos):
+        """Guarda la alerta para atenderla y la notifica, salvo que ya existiera (deduplicación)."""
+        enlace = None
+        if self.gestion is not None:
+            try:
+                uid, nueva = self.gestion.abrir(nivel=nivel, **datos)
+            except Exception as e:                        # sin base de datos se notifica igual
+                print(f"No se pudo guardar la alerta: {e}", flush=True)
+            else:
+                if not nueva:
+                    return
+                enlace = f"{self.url}/#/alertas/{uid}"
+        self.avisar(texto, nivel, asunto, enlace=enlace)
+
+    def _terminar(self, grupo, hora):
+        """Marca la alerta como terminada. Devuelve su enlace en el tablero (para cerrarla), None si
+        no hay gestión, o False si ya había terminado (al reiniciar el servicio): no se reavisa."""
+        if self.gestion is not None:
+            try:
+                ids = self.gestion.terminar(grupo, hora)
+            except Exception as e:
+                print(f"No se pudo actualizar la alerta: {e}", flush=True)
+            else:
+                return f"{self.url}/#/alertas/{ids[0]}" if ids else False
+        return None
+
+    def _cierre(self, texto, nivel, asunto, enlace):
+        if enlace is not False:
+            self.avisar(texto, nivel, asunto, enlace=enlace)
 
     def probar_correo(self, para):
         """Correo de prueba inmediato (sin reintentos), para el botón de la página Usuarios.
@@ -361,15 +394,18 @@ class Alertas:
         # lleva los valores de su propia hora
         for n in novedades:
             if n["evento"] == "alarma_abierta":
-                self.avisar(*self._texto_abierta(motor, n, _valores(motor, n["hora"])))
+                valores = _valores(motor, n["hora"])
+                self._alerta(*self._texto_abierta(motor, n, valores), **self._datos_alarma(motor, n, valores))
             elif n["evento"] == "alarma_cerrada":
-                self.avisar(*self._texto_cerrada(motor, n))
+                self._cierre(*self._texto_cerrada(motor, n), self._terminar("alarma", n["hora"]))
             elif n["evento"] == "aviso_anticipado" and self.con_anticipacion:
-                self.avisar(*self._texto_aviso(motor, n))
+                self._alerta(*self._texto_aviso(motor, n), **self._datos_aviso(n))
+            elif n["evento"] == "aviso_terminado":
+                self._terminar(f"aviso:{n['tipo']}", n["hora"])
             elif n["evento"] == "fuga_abierta":
-                self.avisar(*self._texto_fuga(n))
+                self._alerta(*self._texto_fuga(n), **self._datos_fuga(n))
             elif n["evento"] == "fuga_cerrada":
-                self.avisar(*self._texto_fuga_cerrada(motor, n))
+                self._cierre(*self._texto_fuga_cerrada(motor, n), self._terminar("fuga", n["hora"]))
             elif n["evento"] == "deriva":
                 self.avisar(*self._texto_deriva(n))
         if self.con_riesgo:
@@ -380,19 +416,59 @@ class Alertas:
             if any(h.hour == self.hora_resumen for h in horas):
                 self.avisar(*self._texto_resumen(motor, sensores, ahora))
 
-    def _texto_abierta(self, motor, n, sensores):
-        # la alarma puede seguir abierta o haberse cerrado en el mismo ciclo
+    @staticmethod
+    def _tipo_alarma(motor, n):
+        """Tipo sugerido de la alarma, que puede seguir abierta o haberse cerrado en el mismo ciclo."""
         a = motor.alarma_abierta
         if a is not None and a["id"] == n["id"]:
-            tipo = carga.TIPOS_EVENTO.get(a["tipos"].most_common(1)[0][0], "?") if a["tipos"] else "?"
-        else:
-            tipo = next((x["tipo_sugerido"] for x in motor.alarmas if x["id"] == n["id"]), "?")
+            return carga.TIPOS_EVENTO.get(a["tipos"].most_common(1)[0][0], "?") if a["tipos"] else "?"
+        return next((x["tipo_sugerido"] for x in motor.alarmas if x["id"] == n["id"]), "?")
+
+    @staticmethod
+    def _orden(n, sensores):
+        """Los sensores en alarma, primero los de más probabilidad de evento."""
+        return sorted(n["sensores"], key=lambda x: (-(sensores.get(x, {}).get("p_evento") or 0), x))
+
+    def _datos_alarma(self, motor, n, sensores):
+        tipo = self._tipo_alarma(motor, n)
+        orden = self._orden(n, sensores)
+        probs = [sensores.get(x, {}).get("p_evento") for x in orden]
+        valores = "; ".join(f"{x}: " + ", ".join(f"{NOMBRE[p]} {_num(sensores.get(x, {}).get(p))}{UNIDAD[p]}"
+                                                 for p in ["CL2", "TURB", "PH"]) for x in orden[:6])
+        return {"grupo": "alarma", "inicio": n["hora"], "tipo": "alarma", "evento": tipo,
+                "titulo": f"{TIPOS.get(tipo, 'Evento sin clasificar')} en {_nodos(orden, 3)}",
+                "lugar": ("Sensor " if len(orden) == 1 else "Sensores ") + ", ".join(orden), "nodos": orden,
+                "probabilidad": max((p for p in probs if p is not None), default=None), "antelacion_h": 0,
+                "parametros": valores, "accion": ACCION_ALARMA.get(tipo, ACCION_ALARMA["?"])}
+
+    def _datos_fuga(self, n):
+        tramo = str(n["tramo"])
+        return {"grupo": "fuga", "inicio": n["hora"], "tipo": "fuga", "evento": "fuga",
+                "titulo": f"Posible fuga en el tramo {tramo}", "lugar": f"Tramo {tramo}",
+                "nodos": [x.strip() for x in tramo.replace("–", ",").split(",") if x.strip()],
+                "probabilidad": n["probabilidad"], "antelacion_h": 0,
+                "parametros": f"La fuente entrega {_num(n['caudal_residuo'], 1)} L/s más de lo esperado; "
+                              f"tramo más probable con {_pct(n['p_tramo'])}",
+                "accion": ACCION_ALARMA["fuga"]}
+
+    def _datos_aviso(self, n):
+        tipo = n["tipo"]
+        nombre = TIPOS.get(tipo, "Evento fuera de lo normal") if tipo != "anomalia" else "Operación fuera de lo normal"
+        planta = tipo in EMPIEZAN_EN_LA_FUENTE
+        return {"grupo": f"aviso:{tipo}", "inicio": n["hora"], "tipo": "aviso", "evento": tipo,
+                "titulo": f"Posible {nombre.lower()} en las próximas 24 h",
+                "lugar": "Empezaría en la planta (J280)" if planta else "Toda la red",
+                "nodos": ["J280"] if planta else [], "probabilidad": n["probabilidad"], "antelacion_h": 24,
+                "parametros": f"Señal: {SENALES.get(tipo, SENALES['anomalia'])}",
+                "accion": ACCION_AVISO.get(tipo, ACCION_AVISO["anomalia"])}
+
+    def _texto_abierta(self, motor, n, sensores):
+        tipo = self._tipo_alarma(motor, n)
         tipo_txt = TIPOS.get(tipo, "Evento sin clasificar")
         plural = "es" if len(n["sensores"]) > 1 else ""
         lineas = [f"🔴 <b>Alarma #{n['id']}: {html.escape(tipo_txt)}</b> (tipo sugerido)",
                   f"{_fecha(n['hora'])} · {len(n['sensores'])} sensor{plural} en alarma"]
-        # primero los sensores con más probabilidad de evento
-        orden = sorted(n["sensores"], key=lambda x: (-(sensores.get(x, {}).get("p_evento") or 0), x))
+        orden = self._orden(n, sensores)
         for nodo in orden[:6]:
             s = sensores.get(nodo, {})
             valores = " · ".join(f"{NOMBRE[p]} {_num(s.get(p))}{UNIDAD[p]}" for p in ["CL2", "TURB", "PH"])
@@ -478,6 +554,8 @@ class Alertas:
                     self.riesgo[clave] += horas_nuevas
                     if self.riesgo[clave] >= HORAS_FIN_RIESGO:
                         del self.riesgo[clave]
+                        self._terminar(f"riesgo:{nodo}:{par}", ahora)
+        nuevos, enlace = self._guardar_riesgos(nuevos, ahora)
         if nuevos:
             para = _fecha(ahora + pd.Timedelta(hours=24))
             lineas = [f"🟠 <b>Riesgo en 24 h</b>: pronóstico fuera de norma para el {para}"]
@@ -490,7 +568,32 @@ class Alertas:
             lineas.append(self.url)
             nodos = list(dict.fromkeys(nodo for nodo, *_ in nuevos))
             pars = ", ".join(dict.fromkeys(NOMBRE[par] for _, par, *_ in nuevos))
-            self.avisar("\n".join(lineas), "amarillo", f"Alerta amarilla · Riesgo en 24 h: {pars} en {_nodos(nodos)}")
+            self.avisar("\n".join(lineas), "amarillo", f"Alerta amarilla · Riesgo en 24 h: {pars} en {_nodos(nodos)}",
+                        enlace=enlace)
+
+    def _guardar_riesgos(self, nuevos, ahora):
+        """Una alerta por sensor y parámetro. Devuelve los que de verdad son nuevos (al reiniciar el
+        servicio, los que ya estaban activos no se vuelven a avisar) y el enlace del correo."""
+        if self.gestion is None or not nuevos:
+            return nuevos, None
+        quedan, ids = [], []
+        for nodo, par, v, limite in nuevos:
+            try:
+                uid, nueva = self.gestion.abrir(
+                    grupo=f"riesgo:{nodo}:{par}", inicio=ahora, tipo="riesgo", nivel="amarillo", evento=par,
+                    titulo=f"Riesgo en 24 h: {NOMBRE[par]} fuera de norma en {nodo}", lugar=f"Sensor {nodo}",
+                    nodos=[nodo], antelacion_h=24,
+                    parametros=f"Pronóstico de {NOMBRE[par]} a 24 h: {_num(v)}{UNIDAD[par]} ({limite})",
+                    accion=ACCION_RIESGO[(par, limite.split()[0])])
+            except Exception as e:
+                print(f"No se pudo guardar la alerta: {e}", flush=True)
+                quedan.append((nodo, par, v, limite))
+                continue
+            if nueva:
+                quedan.append((nodo, par, v, limite))
+                ids.append(uid)
+        enlace = f"{self.url}/#/alertas/{ids[0]}" if len(ids) == 1 else f"{self.url}/#/alertas"
+        return quedan, enlace
 
     def _texto_resumen(self, motor, sensores, ahora):
         desde = ahora - pd.Timedelta(hours=24)

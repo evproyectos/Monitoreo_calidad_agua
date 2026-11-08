@@ -108,6 +108,8 @@ def test_aviso_anticipado_se_abre_una_vez_y_se_cierra(tmp_path, cfg):
     assert [(n["tipo"], n["hora"]) for n in avisos] == [("falla_cloro", str(INICIO + pd.Timedelta(hours=6))),
                                                         ("turbidez_fuente", str(INICIO + pd.Timedelta(hours=7)))]
     assert len(m.lista_avisos()) == 2 and not m.avisos_abiertos          # ya se cerraron
+    terminados = sorted(n["tipo"] for n in novedades if n["evento"] == "aviso_terminado")
+    assert terminados == ["falla_cloro", "turbidez_fuente"]
     r = m.resumen_anticipacion()
     assert {t["tipo"] for t in r["tipos"]} == {"turbidez_fuente", "falla_cloro"}
     assert not any(t["en_aviso"] for t in r["tipos"])
