@@ -16,11 +16,12 @@ class CanalLista:
     def __init__(self, fallar=0):
         self.mensajes, self.fallar = [], fallar
 
-    def enviar(self, texto):
+    def enviar(self, aviso):
         if self.fallar:
             self.fallar -= 1
             raise ConnectionError("sin red")
-        self.mensajes.append(texto)
+        self.mensajes.append(aviso.texto)
+        return ["alguien"]
 
 
 def hora(k):
@@ -39,9 +40,14 @@ def correr(motor, al, horas):
 @pytest.fixture
 def al(monkeypatch):
     monkeypatch.delenv("TELEGRAM_TOKEN", raising=False)
-    a = alertas.Alertas(canal=CanalLista())
-    a.textos = []
-    a.avisar = a.textos.append                  # sin hilo: los mensajes quedan en la lista
+    return sin_hilo(alertas.Alertas(canal=CanalLista()))
+
+
+def sin_hilo(a):
+    """Los mensajes quedan en a.textos y, con su nivel y asunto, en a.avisos."""
+    a.textos, a.avisos = [], []
+    a.avisar = lambda texto, nivel="rojo", asunto=None: (a.textos.append(texto),
+                                                         a.avisos.append(alertas.Aviso(texto, nivel, asunto)))
     return a
 
 
@@ -158,13 +164,20 @@ def test_envio_en_segundo_plano_con_reintentos(monkeypatch):
     assert malo.fallidas == 1 and malo.estado()["fallidas"] == 1
 
 
-def test_canal_segun_variables_de_entorno(monkeypatch):
-    monkeypatch.delenv("TELEGRAM_TOKEN", raising=False)
-    assert alertas.canal_desde_entorno().nombre == "consola"
+def test_canales_segun_variables_de_entorno(monkeypatch):
+    for v in ("TELEGRAM_TOKEN", "SMTP_SERVIDOR"):
+        monkeypatch.delenv(v, raising=False)
+    assert [c.nombre for c in alertas.canales_desde_entorno()] == ["consola"]
     monkeypatch.setenv("TELEGRAM_TOKEN", "123:abc")
     monkeypatch.setenv("TELEGRAM_CHAT_ID", "11, 22")
-    canal = alertas.canal_desde_entorno()
+    (canal,) = alertas.canales_desde_entorno()
     assert canal.nombre == "telegram" and canal.chats == ["11", "22"]
+    monkeypatch.setenv("SMTP_SERVIDOR", "smtp.ejemplo.com")
+    monkeypatch.setenv("SMTP_USUARIO", "alertas@ejemplo.com")
+    monkeypatch.setenv("SMTP_PUERTO", "465")
+    a = alertas.Alertas()
+    assert a.nombre == "correo + telegram" and a.correo.seguridad == "ssl"
+    assert a.correo.remitente == "alertas@ejemplo.com"
     monkeypatch.setenv("ALERTAS_RESUMEN_HORA", "-1")
     monkeypatch.setenv("ALERTAS_RIESGO", "0")
     e = alertas.Alertas(canal=CanalLista()).estado()
@@ -179,16 +192,16 @@ def test_telegram_manda_a_cada_chat_y_avisa_si_falla(monkeypatch):
             self.status_code, self.text = codigo, "error de prueba"
 
     monkeypatch.setattr(alertas.requests, "post", lambda url, json, timeout: enviados.append(json) or Respuesta(200))
-    alertas.CanalTelegram("tok", ["1", "2"]).enviar("<b>hola</b>")
+    assert alertas.CanalTelegram("tok", ["1", "2"]).enviar(alertas.Aviso("<b>hola</b>")) == ["2 chats de Telegram"]
     assert [e["chat_id"] for e in enviados] == ["1", "2"] and enviados[0]["parse_mode"] == "HTML"
     monkeypatch.setattr(alertas.requests, "post", lambda url, json, timeout: Respuesta(400))
     with pytest.raises(RuntimeError, match="400"):
-        alertas.CanalTelegram("tok", ["1"]).enviar("hola")
+        alertas.CanalTelegram("tok", ["1"]).enviar(alertas.Aviso("hola"))
 
 
 def test_consola_quita_el_formato(capsys):
-    alertas.CanalConsola().enviar("<b>Alarma</b> 🔴")
-    assert capsys.readouterr().out.strip() == "[alerta] Alarma 🔴"
+    alertas.CanalConsola().enviar(alertas.Aviso("<b>Alarma</b> 🔴 &lt;J10&gt;"))
+    assert capsys.readouterr().out.strip() == "[alerta] Alarma 🔴 <J10>"
 
 
 def test_llamadas_sin_horas_nuevas_no_cuentan_para_cerrar_el_riesgo(cfg, al):
@@ -217,9 +230,7 @@ def test_aviso_anticipado_con_llegada_a_los_sensores(cfg, al):
 
 def test_avisos_anticipados_se_pueden_apagar(cfg, al, monkeypatch):
     monkeypatch.setenv("ALERTAS_ANTICIPACION", "0")
-    a = alertas.Alertas(canal=CanalLista())
-    a.textos = []
-    a.avisar = a.textos.append
+    a = sin_hilo(alertas.Alertas(canal=CanalLista()))
     motor = Motor(cfg, ModelosFalsos(p_anticipa=lambda h, k: 0.9), registrar=False)
     correr(motor, a, 8)
     assert not [t for t in a.textos if "Aviso anticipado" in t]
@@ -238,3 +249,28 @@ def test_mensajes_de_fuga_con_tramo(cfg, al):
     assert "<b>Qué hacer:</b> recorrer el tramo" in abierta and "/#/fugas" in abierta
     cerrada = next(t for t in al.textos if "Fuga #1: alarma cerrada" in t)
     assert "tramo J10 – J20" in cerrada and "(2 h)" in cerrada
+
+
+def test_cada_aviso_tiene_nivel_y_un_asunto_con_el_nivel_y_el_sensor(cfg, al):
+    """CU-04: el asunto del correo dice el nivel de riesgo y el nodo."""
+    alto = {hora(k) for k in (5, 6, 7)}
+    motor = Motor(cfg, ModelosFalsos(p_evento=lambda h, n: 0.95 if (n == "J10" and h in alto) else 0.1,
+                                     pronostico_24h={"J20": {"CL2": 0.2}}), registrar=False)
+    al.hora_resumen = 9
+    correr(motor, al, 12)
+    asuntos = {a.asunto: a.nivel for a in al.avisos}
+    assert asuntos["Alerta roja · Alarma #1: contaminación en J10"] == "rojo"
+    assert asuntos["Alarma #1 cerrada · contaminación · J10"] == "rojo"
+    assert asuntos["Alerta amarilla · Riesgo en 24 h: cloro en J20"] == "amarillo"
+    assert asuntos["Resumen diario · 01/05/2026 · 1 alarma en 24 h"] == "resumen"
+
+
+def test_asunto_del_aviso_anticipado_y_varios_sensores(cfg, al):
+    alto = {hora(k) for k in (5, 6)}
+    motor = Motor(cfg, ModelosFalsos(p_anticipa=lambda h, k: 0.82 if h in alto else 0.1), registrar=False)
+    correr(motor, al, 9)
+    (aviso,) = [a for a in al.avisos if a.nivel == "amarillo"]
+    assert aviso.asunto == ("Alerta amarilla · Posible turbidez en la fuente en las próximas 24 h · "
+                            "empezaría en la planta (J280)")
+    assert alertas._nodos(["J439", "J224", "J69"]) == "J439 y 2 sensores más"
+    assert alertas._nodos(["J439", "J224"]) == "J439 y 1 sensor más" and alertas._nodos(["J1"]) == "J1"

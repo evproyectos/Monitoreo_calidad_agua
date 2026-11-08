@@ -27,7 +27,8 @@ backend/
     pronostico_lluvia.py  pronóstico de lluvia que necesitan los modelos (archivo u Open-Meteo)
     motor.py           recibe lecturas, procesa cada hora cerrada, maneja las alarmas
     cliente_datos.py   consulta la API de datos
-    alertas.py         avisos por Telegram (alarmas, avisos anticipados, riesgo en 24 h, resumen diario)
+    alertas.py         avisos por correo y Telegram (alarmas, avisos anticipados, riesgo en 24 h, resumen diario)
+    correo.py          envío de los avisos por correo (SMTP) a los destinatarios de cada nivel
     servicio.py        API del servicio (FastAPI, puerto 8001) que además sirve el dashboard
     ejecutar.py        motor en vivo conectado a la API de datos, solo en consola
     verificar.py       comprueba que el motor en vivo da lo mismo que los notebooks
@@ -77,8 +78,9 @@ segundos. Levanta cinco servicios:
 | `datos` | API de datos de los sensores (`Simulador_sensor/tiempo_real`) | http://127.0.0.1:8000 |
 | `emisor` | manda las lecturas de la prueba como si fueran los sensores (31 días de precarga y después 1 h simulada por segundo; `VELOCIDAD=4 docker compose up` lo acelera) | — |
 | `monitoreo` | servicio con el dashboard, que guarda los resultados de cada hora también en la base de datos | http://127.0.0.1:8001 |
-| `db` | PostgreSQL 16 con TimescaleDB: tablas `pronosticos`, `deteccion`, `alarmas`, `anticipacion` y `fugas` (las que tienen fecha, como hipertablas), y `usuarios`, `sesiones` y `bitacora` del dashboard | puerto 5432 dentro de Docker |
+| `db` | PostgreSQL 16 con TimescaleDB: tablas `pronosticos`, `deteccion`, `alarmas`, `anticipacion` y `fugas` (las que tienen fecha, como hipertablas), y `usuarios`, `sesiones`, `bitacora` y `notificaciones` del dashboard | puerto 5432 dentro de Docker |
 | `mlflow` | los experimentos de los notebooks (lee `Modelo_calidad_agua/mlflow.db`) | http://127.0.0.1:5000 |
+| `mailpit` | solo con `docker compose --profile correo up --build`: servidor de correo de prueba que recibe los correos de las alertas sin mandarlos a nadie y los muestra en una página (ver **Alertas por correo**) | http://127.0.0.1:8025 |
 
 La primera vez hay que crear el administrador del dashboard (pide la contraseña dos veces):
 
@@ -231,9 +233,62 @@ http://localhost:5173 (las llamadas a `/api` se redirigen al backend en el puert
 
 **Solo consola**, sin dashboard: `python -m monitoreo.ejecutar` en lugar del servicio.
 
+### Alertas por correo
+
+Cada aviso (los mismos que se describen en **Alertas por Telegram**) se manda por correo
+(RF-003.3, CU-04) a los usuarios que el administrador marcó en **Usuarios**:
+
+| Nivel | Qué avisos | Quién lo recibe |
+|---|---|---|
+| Rojo (críticas) | alarma o posible fuga, al abrirse y al cerrarse | quien tiene marcadas las **Críticas** (por defecto, operadores y administradores) |
+| Amarillo (predictivas) | aviso anticipado, riesgo en 24 h, datos que se apartan de lo habitual | quien tiene marcadas las **Predictivas** (por defecto, operadores) |
+| Resumen diario | el resumen de la hora `ALERTAS_RESUMEN_HORA` | quien tiene marcada cualquiera de las dos |
+
+El asunto dice el nivel, qué pasa y dónde (por ejemplo `Alerta roja · Alarma #3: falla de
+cloración en J439 y 2 sensores más`), y el correo trae la probabilidad, la antelación, los sensores
+con sus valores, qué hacer y un botón al tablero. Cada persona recibe su propio correo. El correo
+sale apenas el motor procesa la hora, en un hilo aparte. Si falla, se reintenta 3 veces (a los 5,
+10 y 20 s), solo con los destinatarios que faltan. Cada envío queda registrado en la tabla
+`notificaciones` con su estado (enviada, fallida o sin destinatarios), y el administrador lo ve en
+**Usuarios › Alertas por correo**. Desde ahí puede mandarse un correo de prueba.
+
+**Con Gmail** (una cuenta exclusiva para las alertas, p. ej. `alertas.asadalalucha@gmail.com`):
+
+1. En la cuenta de Google, activar la **verificación en 2 pasos** (Seguridad).
+2. En https://myaccount.google.com/apppasswords crear una **contraseña de aplicación** (nombre:
+   "Monitoreo ASADA"). Google muestra 16 letras una sola vez.
+3. En el `.env` (no va en el código ni en git):
+
+   ```
+   SMTP_SERVIDOR=smtp.gmail.com
+   SMTP_PUERTO=587
+   SMTP_USUARIO=alertas.asadalalucha@gmail.com
+   SMTP_CONTRASENA=<las 16 letras, sin espacios>
+   URL_DASHBOARD=https://<dirección del tablero que abren los destinatarios>
+   ```
+
+4. Probar desde `backend/` (o con `docker compose exec monitoreo python -m monitoreo.correo ...`):
+
+   ```
+   python -m monitoreo.correo --prueba tu-correo@ejemplo.com
+   ```
+
+5. Reiniciar el servicio: en la consola dice `Alertas: correo` (o `correo + telegram`).
+
+Una cuenta gratuita de Gmail admite unos 500 destinatarios por día, de sobra para la ASADA. Con
+otro proveedor (Outlook, el hosting de la ASADA, Brevo...) se usan los datos SMTP que dé ese
+proveedor. `SMTP_SEGURIDAD` es `starttls` por defecto o `ssl` con el puerto 465, y
+`SMTP_REMITENTE` sirve si el remitente no es el mismo usuario.
+
+**Sin cuenta de correo, para probar o demostrar:** `docker compose --profile correo up --build`
+levanta también **Mailpit**, que recibe todos los correos y los muestra en http://127.0.0.1:8025
+sin mandarlos a nadie. En el `.env`: `SMTP_SERVIDOR=mailpit`, `SMTP_PUERTO=1025`,
+`SMTP_SEGURIDAD=ninguna` y `SMTP_REMITENTE=alertas@asada.local`.
+
 ### Alertas por Telegram
 
-El servicio avisa por Telegram cuando se **abre** una alarma (tipo de evento sugerido, sensores con
+Además del correo, el servicio puede avisar por Telegram (el segundo canal que CU-04 deja para
+después del MVP). Avisa cuando se **abre** una alarma (tipo de evento sugerido, sensores con
 su probabilidad de evento y sus valores de cloro, turbidez y pH, a qué sensores todavía no llega si
 el evento empieza en la planta, y qué hacer), cuando se **cierra** (duración y sensores), cuando el
 pronóstico de un sensor sale de la norma en las próximas 24 h (**riesgo**, una vez por episodio,
@@ -242,7 +297,7 @@ con qué hacer según el parámetro), cuando el modelo de anticipación espera q
 planta, en cuántas horas llegaría a cada sensor, y qué revisar para evitarlo) y con un **resumen
 diario**. Las acciones recomendadas están en `ACCION_ALARMA`, `ACCION_AVISO` y `ACCION_RIESGO` de
 `backend/monitoreo/alertas.py`: son una guía general y la ASADA debe ajustarlas a sus
-procedimientos. Sin Telegram configurado, las alertas solo se escriben en
+procedimientos. Sin correo ni Telegram configurados, las alertas solo se escriben en
 la consola del servicio.
 
 Configuración, una sola vez:
@@ -258,8 +313,9 @@ Configuración, una sola vez:
    python -m monitoreo.alertas --prueba
    ```
 
-Al arrancar, el servicio dice en la consola qué canal usa (`Alertas: telegram`) y `/api/estado`
-informa cuántas alertas se enviaron y el último error, si hubo.
+Al arrancar, el servicio dice en la consola qué canales usa (`Alertas: telegram` o
+`correo + telegram`) y `/api/estado` informa cuántas alertas se enviaron por cada canal y el último
+error, si hubo.
 
 Opciones (en el `.env`): `ALERTAS_RIESGO=0` para no avisar del riesgo en 24 h,
 `ALERTAS_ANTICIPACION=0` para no mandar los avisos anticipados,
@@ -330,6 +386,8 @@ El dashboard pide correo y contraseña (CU-00). Cada usuario tiene un rol:
 | `POST /api/sesion/contrasena` | cambia la contraseña propia: `{"actual", "nueva"}` |
 | `GET, POST /api/usuarios`, `PATCH /api/usuarios/{id}` | solo administrador: lista, crea y modifica usuarios (nombre, rol, activo, notificaciones, contraseña temporal) |
 | `GET /api/bitacora?limite=100` | solo administrador: accesos y cambios, el más reciente primero |
+| `GET /api/notificaciones?limite=30` | solo administrador: si el correo está configurado, cuántas personas reciben cada nivel y los últimos envíos por correo y Telegram |
+| `POST /api/notificaciones/prueba` | solo administrador: manda un correo de prueba a quien lo pide (409 si no hay SMTP; 502 con el motivo si el servidor no lo acepta) |
 | `GET /api/estado` | hora de los datos, conexión, alarma activa, modo de pronóstico, estado de las alertas. Desde aquí, todo `/api/...` pide la sesión (401 sin ella) |
 | `POST /predict/fugas` | requiere `X-API-Key`. Con las mismas lecturas, pero de los últimos 8 días: probabilidad de fuga, alarma confirmada, tramo más probable y caudal de más (nivel verde, amarillo o rojo). 422 si falta historia |
 | `GET /api/sensores` | estado actual de los sensores: observado, pronóstico a 24 h, probabilidad de evento |

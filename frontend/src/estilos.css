@@ -389,6 +389,25 @@ p.nota { margin: 4px 0 0; }
 .lista-bitacora .quien, .lista-bitacora .detalle { color: var(--tinta-2); font-size: 12.5px; }
 .lista-bitacora li.alerta .que { color: var(--atencion); }
 
+.correo-alertas .panel-cabeza { align-items: flex-start; }
+.correo-datos { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: flex-end; gap: 14px 24px; margin-top: 14px; }
+.correo-datos dl { margin: 0; display: flex; flex-wrap: wrap; gap: 12px 28px; }
+.correo-datos dt { font-size: 12px; color: var(--tinta-2); font-weight: 700; display: flex; align-items: center; gap: 6px; }
+.correo-datos dd { margin: 2px 0 0; font-weight: 700; font-size: 14px; }
+.correo-datos dd small { font-weight: 500; color: var(--tinta-2); }
+.correo-datos dd.falta { color: var(--atencion); }
+.correo-datos .sin-configurar { flex-basis: 100%; max-width: 640px; }
+.correo-datos .sin-configurar dd { font-weight: 500; line-height: 1.5; }
+.correo-datos code { font-size: 12.5px; background: var(--rejilla); padding: 1px 5px; border-radius: 5px; }
+.correo-prueba { display: grid; gap: 4px; justify-items: end; }
+.correo-alertas > .mensaje { margin-top: 12px; }
+.subtitulo { font-size: 14px; font-weight: 800; margin: 20px 0 0; }
+.lista-correos { max-height: 360px; }
+.lista-correos .que { display: flex; align-items: baseline; gap: 7px; overflow-wrap: anywhere; }
+.lista-correos .que .punto { flex: none; transform: translateY(-1px); }
+.lista-correos .quien .pastilla { padding: 1px 8px; font-size: 11.5px; }
+.punto.azul { background: var(--primario); }
+
 /* ---------------------------------------------------------------- pantallas angostas */
 @media (max-width: 1100px) {
   .cuerpo { grid-template-columns: 1fr; }
@@ -412,6 +431,7 @@ p.nota { margin: 4px 0 0; }
   .acciones-fila { text-align: left; white-space: normal; }
   .lista-bitacora li { grid-template-columns: 1fr; }
   .lista-bitacora time { grid-row: auto; }
+  .correo-prueba { justify-items: start; }
   .vistas { width: 100%; }
   .vistas a { flex: 1; text-align: center; padding: 7px 8px; }
   .resumen-red { grid-template-columns: auto minmax(0, 1fr); padding: 14px 16px; }

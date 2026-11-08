@@ -9,7 +9,8 @@ Roles
 
 Dónde se guardan
   En la base del servicio (BASE_DE_DATOS, PostgreSQL en Docker) o, sin ella, en SQLite en
-  registros/usuarios.db. Tablas: usuarios, sesiones y bitacora (accesos y cambios, RNF-004).
+  registros/usuarios.db. Tablas: usuarios, sesiones, bitacora (accesos y cambios, RNF-004) y
+  notificaciones (cada alerta enviada por correo o Telegram, con sus destinatarios, CU-04 paso 5).
 
 Contraseñas
   Nunca se guardan: se guarda su hash con scrypt (sal aleatoria por usuario). Mínimo 10
@@ -77,6 +78,18 @@ bitacora = Table(
     Column("accion", String(40), nullable=False),
     Column("detalle", String(500)),
     Column("origen", String(64)),
+)
+notificaciones = Table(
+    "notificaciones", meta,
+    Column("id", Integer, primary_key=True),
+    Column("fecha", DateTime, nullable=False),
+    Column("canal", String(20), nullable=False),               # correo o telegram
+    Column("nivel", String(20), nullable=False),               # rojo, amarillo, resumen o prueba
+    Column("asunto", String(300), nullable=False),
+    Column("estado", String(20), nullable=False),              # enviada, fallida o sin_destinatarios
+    Column("destinatarios", String(2000)),
+    Column("intentos", Integer, nullable=False, default=1),
+    Column("error", String(300)),
 )
 
 
@@ -289,8 +302,24 @@ class Usuarios:
         """Correos que reciben las notificaciones de un nivel ("rojo" o "amarillo"), para el SMTP."""
         col = usuarios.c.notificar_rojo if nivel == "rojo" else usuarios.c.notificar_amarillo
         with self.motor.connect() as c:
-            filas = c.execute(select(usuarios.c.correo).where(col.is_(True), usuarios.c.activo.is_(True)))
+            filas = c.execute(select(usuarios.c.correo).where(col.is_(True), usuarios.c.activo.is_(True))
+                              .order_by(usuarios.c.correo))
             return [f.correo for f in filas]
+
+    # ------------------------------------------------------------------ notificaciones enviadas
+    def anotar_notificacion(self, canal, nivel, asunto, estado, destinatarios=None, intentos=1, error=None):
+        with self.motor.begin() as c:
+            c.execute(insert(notificaciones).values(
+                fecha=datetime.now(), canal=canal, nivel=nivel, asunto=asunto[:300], estado=estado,
+                destinatarios=(destinatarios or "")[:2000] or None, intentos=intentos,
+                error=(error or "")[:300] or None))
+
+    def ver_notificaciones(self, limite=50):
+        with self.motor.connect() as c:
+            filas = c.execute(select(notificaciones).order_by(notificaciones.c.id.desc()).limit(limite)).all()
+        return [{"fecha": f.fecha.strftime("%Y-%m-%d %H:%M:%S"), "canal": f.canal, "nivel": f.nivel,
+                 "asunto": f.asunto, "estado": f.estado, "destinatarios": f.destinatarios,
+                 "intentos": f.intentos, "error": f.error} for f in filas]
 
 
 if __name__ == "__main__":

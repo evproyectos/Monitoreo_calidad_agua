@@ -1,9 +1,10 @@
 import { useMemo, useState } from "react";
 import { pedir, useConsulta } from "../api.js";
 import { fechaHora } from "../formato.js";
+import CorreoAlertas from "./CorreoAlertas.jsx";
 
 // Gestión de usuarios, roles y destinatarios de las notificaciones (CU-07), solo para el
-// administrador, con la bitácora de accesos y cambios.
+// administrador, con el envío de las alertas por correo y la bitácora de accesos y cambios.
 
 const ACCIONES = {
   inicio_sesion: "Inició sesión",
@@ -98,6 +99,7 @@ function Restablecer({ usuario, minimo, onListo, onCancelar }) {
 export default function Usuarios({ yo }) {
   const lista = useConsulta("/api/usuarios", 0);
   const bitacora = useConsulta("/api/bitacora?limite=60", 15000);
+  const notificaciones = useConsulta("/api/notificaciones?limite=30", 30000);
   const [filtro, setFiltro] = useState({ texto: "", rol: "", estado: "activos" });
   const [creando, setCreando] = useState(false);
   const [restableciendo, setRestableciendo] = useState(null);
@@ -115,6 +117,7 @@ export default function Usuarios({ yo }) {
     setAviso({ ok: texto });
     lista.recargar();
     bitacora.recargar();
+    notificaciones.recargar();
   };
 
   const cambiar = async (u, cambios, texto) => {
@@ -227,10 +230,13 @@ export default function Usuarios({ yo }) {
                        onListo={(u) => { setRestableciendo(null); listo(`Contraseña de ${u.nombre} restablecida. Deberá cambiarla al entrar.`); }} />
         )}
         <p className="nota">
-          Los correos se enviarán cuando el servicio tenga configurado el envío por SMTP. Desactivar a
-          alguien cierra sus sesiones abiertas.
+          Críticas: alarmas y posibles fugas. Predictivas: avisos anticipados y riesgo en 24 h. El resumen
+          diario le llega a quien reciba cualquiera de las dos. Desactivar a alguien cierra sus sesiones y
+          deja de enviarle correos.
         </p>
       </section>
+
+      <CorreoAlertas consulta={notificaciones} yo={yo} />
 
       <section className="panel bitacora-sistema" aria-label="Bitácora de accesos y cambios">
         <div className="panel-cabeza"><h2>Bitácora de accesos y cambios</h2><span className="nota">Últimos 60</span></div>

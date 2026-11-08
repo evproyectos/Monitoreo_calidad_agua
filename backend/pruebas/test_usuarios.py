@@ -99,7 +99,13 @@ def test_destinatarios_por_nivel(cuentas):
 # ---------------------------------------------------------------------------- por la API
 @pytest.fixture
 def api(tmp_path, monkeypatch):
+    yield from _cliente(tmp_path, monkeypatch)
+
+
+def _cliente(tmp_path, monkeypatch, smtp=False):
     monkeypatch.delenv("TELEGRAM_TOKEN", raising=False)
+    if not smtp:
+        monkeypatch.delenv("SMTP_SERVIDOR", raising=False)
     monkeypatch.setattr(srv, "Motor", lambda cfg: Motor(cfg, ModelosFalsos(), registrar=False))
     monkeypatch.setattr(srv, "ClienteDatos", lambda url: type("D", (), {"lecturas_desde": lambda self, d=None: []})())
     cfg = configuracion(tmp_path, inicio_sesion=True)
@@ -165,3 +171,61 @@ def test_credenciales_incorrectas_por_la_api(api):
     r = entrar(api, "admin@asada.cr", "equivocada-1")
     assert r.status_code == 401 and r.json()["detail"]["error"] == "Correo o contraseña incorrectos."
     assert "set-cookie" not in r.headers
+
+
+def test_notificaciones_solo_para_el_administrador(api):
+    entrar(api, "beto@asada.cr")
+    assert api.get("/api/notificaciones").status_code == 403
+    assert api.post("/api/notificaciones/prueba").status_code == 403
+    api.delete("/api/sesion")
+    entrar(api, "admin@asada.cr")
+    r = api.get("/api/notificaciones").json()
+    assert r["correo"] == {"configurado": False} and r["destinatarios"] == {"rojo": 1, "amarillo": 0}
+    r = api.post("/api/notificaciones/prueba")
+    assert r.status_code == 409 and "SMTP_SERVIDOR" in r.json()["detail"]["error"]
+
+
+class ServidorCorreo:
+    """Hace de smtplib.SMTP y guarda lo que se manda."""
+    enviados = []
+
+    def __init__(self, *a, **k):
+        pass
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *a):
+        return False
+
+    def starttls(self, context=None):
+        pass
+
+    def login(self, usuario, contrasena):
+        pass
+
+    def send_message(self, m):
+        ServidorCorreo.enviados.append(m)
+
+
+@pytest.fixture
+def api_correo(tmp_path, monkeypatch):
+    from monitoreo import correo
+    ServidorCorreo.enviados = []
+    monkeypatch.setattr(correo.smtplib, "SMTP", ServidorCorreo)
+    monkeypatch.setenv("SMTP_SERVIDOR", "smtp.ejemplo.com")
+    monkeypatch.setenv("SMTP_USUARIO", "alertas@asada.cr")
+    monkeypatch.setenv("SMTP_CONTRASENA", "clave-de-aplicacion")
+    yield from _cliente(tmp_path, monkeypatch, smtp=True)
+
+
+def test_correo_de_prueba_por_la_api(api_correo):
+    entrar(api_correo, "admin@asada.cr")
+    r = api_correo.post("/api/notificaciones/prueba")
+    assert r.status_code == 200 and r.json() == {"enviado_a": "admin@asada.cr"}
+    assert [m["To"] for m in ServidorCorreo.enviados] == ["admin@asada.cr"]
+    datos = api_correo.get("/api/notificaciones").json()
+    assert datos["correo"] == {"configurado": True, "servidor": "smtp.ejemplo.com:587", "seguridad": "starttls",
+                               "remitente": "alertas@asada.cr"}
+    assert datos["ultimas"][0]["estado"] == "enviada" and datos["ultimas"][0]["nivel"] == "prueba"
+    assert datos["ultimas"][0]["destinatarios"] == "admin@asada.cr"

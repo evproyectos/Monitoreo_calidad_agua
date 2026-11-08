@@ -96,9 +96,9 @@ def _permisos(u):
 def _instalar_sesiones(app, cfg, cuentas):
     """
     Inicio de sesión del dashboard. Todo /api/... pide una sesión vigente (cookie), salvo
-    /api/sesion (entrar, salir y ver quién está). /api/usuarios y /api/bitacora son solo para el
-    rol administrador. Con una contraseña temporal solo se puede cambiarla. /health, la página del
-    dashboard y /predict (con su clave de API) no cambian. Con INICIO_SESION=no queda todo abierto.
+    /api/sesion (entrar, salir y ver quién está). /api/usuarios, /api/bitacora y /api/notificaciones
+    son solo para el rol administrador. Con una contraseña temporal solo se puede cambiarla. /health,
+    la página del dashboard y /predict (con su clave de API) no cambian. Con INICIO_SESION=no queda todo abierto.
     """
     cache, candado = {}, threading.Lock()
 
@@ -139,7 +139,8 @@ def _instalar_sesiones(app, cfg, cuentas):
                 return error(401, "Inicia sesión para continuar.")
             if u["debe_cambiar"] and ruta != "/api/sesion/contrasena":
                 return error(403, "Cambia tu contraseña temporal para continuar.", debe_cambiar=True)
-            if ruta.startswith(("/api/usuarios", "/api/bitacora")) and u["rol"] != "administrador":
+            if ruta.startswith(("/api/usuarios", "/api/bitacora", "/api/notificaciones")) \
+                    and u["rol"] != "administrador":
                 return error(403, "Esta sección es solo para el administrador.")
             request.state.usuario = u
         return await call_next(request)
@@ -238,11 +239,14 @@ def silenciar_cortes(loop):
 class Servicio:
     """El motor más el ciclo en segundo plano que lo alimenta desde la API de datos."""
 
-    def __init__(self, cfg):
+    def __init__(self, cfg, cuentas=None):
         self.cfg = cfg
         self.motor = Motor(cfg)
         self.cliente = ClienteDatos(cfg.url_datos)
-        self.alertas = Alertas()                         # Telegram si está configurado; si no, consola
+        # correo (SMTP) y Telegram si están configurados; si no, consola. Los destinatarios del correo
+        # son los usuarios marcados en la página Usuarios, y cada envío queda en la tabla notificaciones
+        self.alertas = Alertas(destinatarios=cuentas.destinatarios if cuentas else None,
+                               registro=cuentas.anotar_notificacion if cuentas else None)
         self.candado = threading.Lock()
         self.conectado = False
         self.ultimo_error = None
@@ -337,11 +341,13 @@ def crear_app(cfg=None):
     async def ciclo_de_vida(_app):
         silenciar_cortes(asyncio.get_running_loop())
         print("Cargando modelos...")
-        estado["s"] = Servicio(cfg)
+        estado["s"] = Servicio(cfg, cuentas)
         estado["s"].iniciar()
         print(f"Servicio de monitoreo listo · modo {cfg.modo_pronostico} · datos desde {cfg.url_datos}")
-        print(f"Alertas: {estado['s'].alertas.canal.nombre}" + ("" if estado["s"].alertas.canal.nombre == "telegram"
-              else "  (para Telegram: variables TELEGRAM_TOKEN y TELEGRAM_CHAT_ID)"))
+        al = estado["s"].alertas
+        print(f"Alertas: {al.nombre}" + (f" · remitente {al.correo.remitente} por {al.correo.servidor}"
+                                         if al.correo else "  (para el correo: SMTP_SERVIDOR, SMTP_USUARIO y "
+                                         "SMTP_CONTRASENA en el .env)"))
         claves = len(seguridad.claves_configuradas())
         print(f"Clave de API para /predict: {claves} configurada{'s' if claves != 1 else ''}" if claves else
               "Sin CLAVES_API: /predict/contaminacion responde 503 hasta que se configure una clave")
@@ -414,7 +420,7 @@ def crear_app(cfg=None):
                 "pronostico_lluvia": e["pronostico_lluvia"],
                 "conectado_a_datos": s.conectado,
                 "ultima_hora_procesada": e["ultima_hora_procesada"],
-                "alertas": s.alertas.canal.nombre,
+                "alertas": s.alertas.nombre,
                 "procesos_prediccion": s.trabajadores.cuantos if s.trabajadores else 0,
                 "recargas_de_modelos": s.recargas[-5:]}
 
@@ -452,6 +458,35 @@ def crear_app(cfg=None):
             return s.predecir("fugas", solicitud)
         except prediccion.ErrorEntrada as e:
             raise HTTPException(422, {"error": e.error, "detalles": e.detalles})
+
+    @app.get("/api/notificaciones")
+    def ver_notificaciones(limite: int = 30):
+        """Para el administrador: si el correo está configurado, cuántos reciben cada nivel y los
+        últimos envíos (CU-04 y CU-07)."""
+        al = estado["s"].alertas if "s" in estado else None
+        c = al.correo if al else None
+        return {"correo": {"configurado": c is not None, **(c.descripcion() if c else {})},
+                "canales": al.estado()["canales"] if al else {},
+                "destinatarios": {n: len(cuentas.destinatarios(n)) for n in ("rojo", "amarillo")},
+                "ultimas": cuentas.ver_notificaciones(max(1, min(limite, 200)))}
+
+    @app.post("/api/notificaciones/prueba",
+              responses={409: {"description": "El correo no está configurado"},
+                         502: {"description": "El servidor de correo no aceptó el envío"}})
+    async def probar_correo(request: Request):
+        """Manda un correo de prueba al administrador que lo pide."""
+        s = servicio()
+        if s.alertas.correo is None:
+            raise HTTPException(409, {"error": "El envío por correo no está configurado: faltan SMTP_SERVIDOR, "
+                                               "SMTP_USUARIO y SMTP_CONTRASENA en el .env del servicio."})
+        para = request.state.usuario["correo"]
+        if not para:
+            raise HTTPException(409, {"error": "Con INICIO_SESION=no no hay a quién mandarlo: usa "
+                                               "python -m monitoreo.correo --prueba tu@correo."})
+        error = await run_in_threadpool(s.alertas.probar_correo, para)
+        if error:
+            raise HTTPException(502, {"error": error})
+        return {"enviado_a": para}
 
     @app.get("/api/fugas")
     def ver_fugas(horas: int = 168):

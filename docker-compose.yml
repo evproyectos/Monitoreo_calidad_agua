@@ -13,8 +13,10 @@
 #   monitoreo   servicio con el dashboard                    http(s)://127.0.0.1:8001
 #   mlflow      experimentos de los notebooks                http://127.0.0.1:5000
 #   db          PostgreSQL con TimescaleDB: el servicio guarda ahí los resultados de cada hora
+#   mailpit     solo con  docker compose --profile correo up --build : correo de prueba que
+#               recibe los correos de las alertas y los muestra en http://127.0.0.1:8025
 #
-# Los secretos (TELEGRAM_TOKEN, CLAVES_API, ...) van en el .env de esta carpeta, que no se
+# Los secretos (SMTP_CONTRASENA, TELEGRAM_TOKEN, CLAVES_API, ...) van en el .env de esta carpeta, que no se
 # versiona; sin él el servicio funciona igual, con las alertas en la consola. Si el .env tiene
 # CERTIFICADO_TLS y CLAVE_TLS, el servicio atiende por HTTPS con los archivos de secretos/.
 
@@ -89,6 +91,13 @@ services:
     volumes:
       - ../Modelo_calidad_agua/mlflow.db:/mlflow/mlflow.db
       - ../Modelo_calidad_agua/mlartifacts:/mlartifacts
+
+  # correo de prueba (opcional): con SMTP_SERVIDOR=mailpit, SMTP_PUERTO=1025, SMTP_SEGURIDAD=ninguna
+  # y SMTP_REMITENTE=alertas@asada.local en el .env, los correos llegan aquí y no a nadie de verdad
+  mailpit:
+    image: axllent/mailpit:v1.28.2
+    profiles: ["correo"]
+    ports: ["127.0.0.1:8025:8025"]
 
 volumes:
   db:
