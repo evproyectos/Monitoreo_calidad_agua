@@ -33,6 +33,8 @@ backend/
     verificar.py       comprueba que el motor en vivo da lo mismo que los notebooks
     prediccion.py      POST /predict/contaminacion y /predict/fugas: predicción con lecturas que manda el cliente
     seguridad.py       clave de API, registro de accesos rechazados y HTTPS (TLS 1.2 o más)
+    usuarios.py        inicio de sesión, roles, usuarios y bitácora del dashboard (CU-00, CU-07)
+    trabajadores.py    /predict en procesos aparte, para atender a varios usuarios a la vez
     base_datos.py      resultados de cada hora también en una base de datos (PostgreSQL/TimescaleDB)
     probar_prediccion.py  prueba de ese endpoint: latencia p95, errores 422 y mismos números
   pruebas/             pruebas unitarias del servicio (pytest)
@@ -42,10 +44,13 @@ backend/
 .github/              integración continua en GitHub
 frontend/              dashboard en React (Vite + Recharts)
   src/
-    App.jsx            página y navegación entre las dos vistas (#/general y #/sensor/J224)
-    componentes/       Encabezado, VistaGeneral, Anticipacion, Fugas, GraficoRed, MapaCalor,
-                       RedSensores, DetalleSensor, Graficos, Alarmas
-    api.js             consultas periódicas al backend
+    Sesion.jsx         inicio de sesión, contraseña temporal y después el dashboard
+    App.jsx            páginas: #/general, #/sensor/J224, #/usuarios (administrador) y #/cuenta
+    estado.js          semáforo y alertas activas ordenadas por severidad y antelación
+    componentes/       Encabezado, Tarjetas, AlertasActivas, VistaGeneral, Anticipacion, Fugas,
+                       GraficoRed, MapaCalor, DetalleSensor, Graficos, Alarmas, InicioSesion,
+                       Cuenta, Usuarios
+    api.js             consultas periódicas al backend y aviso cuando vence la sesión
     formato.js         etiquetas, norma, tolerancias, formato de números y fechas
     estilos.css        colores (modo claro y oscuro), tipografía y diseño
 registros/             CSV de cada sesión del motor y accesos rechazados (no se versiona)
@@ -72,8 +77,14 @@ segundos. Levanta cinco servicios:
 | `datos` | API de datos de los sensores (`Simulador_sensor/tiempo_real`) | http://127.0.0.1:8000 |
 | `emisor` | manda las lecturas de la prueba como si fueran los sensores (31 días de precarga y después 1 h simulada por segundo; `VELOCIDAD=4 docker compose up` lo acelera) | — |
 | `monitoreo` | servicio con el dashboard, que guarda los resultados de cada hora también en la base de datos | http://127.0.0.1:8001 |
-| `db` | PostgreSQL 16 con TimescaleDB: tablas `pronosticos`, `deteccion`, `alarmas`, `anticipacion` y `fugas` (las que tienen fecha, como hipertablas) | puerto 5432 dentro de Docker |
+| `db` | PostgreSQL 16 con TimescaleDB: tablas `pronosticos`, `deteccion`, `alarmas`, `anticipacion` y `fugas` (las que tienen fecha, como hipertablas), y `usuarios`, `sesiones` y `bitacora` del dashboard | puerto 5432 dentro de Docker |
 | `mlflow` | los experimentos de los notebooks (lee `Modelo_calidad_agua/mlflow.db`) | http://127.0.0.1:5000 |
+
+La primera vez hay que crear el administrador del dashboard (pide la contraseña dos veces):
+
+```
+docker compose exec monitoreo python -m monitoreo.usuarios --crear-admin correo@asada.cr "Nombre Apellido"
+```
 
 Los secretos van en el `.env` de esta carpeta, igual que sin Docker. Si el `.env` tiene
 `CERTIFICADO_TLS` y `CLAVE_TLS`, el contenedor usa los archivos de `secretos/` y el dashboard queda
@@ -131,6 +142,8 @@ queda en `docs/rendimiento/` (la columna 95 % es el percentil 95 de la latencia,
 cd backend
 pip install locust
 $env:CLAVE_API="<una de las claves de CLAVES_API>"
+$env:CORREO_CARGA="<correo de un usuario del dashboard>"     # /api/estado pide sesión
+$env:CONTRASENA_CARGA="<su contraseña>"
 locust -f carga/locustfile.py --host https://127.0.0.1:8001 --headless -u 10 -r 2 -t 5m --csv ../docs/rendimiento/carga
 ```
 
@@ -265,8 +278,8 @@ variables definidas en el sistema (por ejemplo con `setx`) tienen prioridad sobr
   encabezado `X-API-Key`. Sin clave o con una equivocada responde 401 y anota el intento (fecha,
   origen, ruta y motivo, nunca la clave) en `registros/accesos_rechazados.log`. Sin ninguna clave
   configurada responde 503, para que no quede abierto por olvido. En `/docs`, el botón
-  **Authorize** permite probarlo con la clave. El dashboard (`/`, `/api/...`) y `/health` no la
-  piden: son de solo lectura y los usa el navegador.
+  **Authorize** permite probarlo con la clave. El dashboard (`/api/...`) no usa la clave sino el
+  inicio de sesión (abajo); `/health` queda abierto para Docker y el monitoreo externo.
 - **HTTPS.** Con `CERTIFICADO_TLS` y `CLAVE_TLS` el servicio atiende solo por HTTPS, con TLS 1.2
   como versión mínima. Para usarlo en la propia máquina hay un certificado de prueba.
 - **Secretos en el repositorio.** El CI busca secretos en todo el historial con gitleaks.
@@ -282,13 +295,42 @@ El certificado de prueba es autofirmado: el navegador avisa que no lo reconoce h
 marca como confiable (el comando dice cómo). Para un servidor real se usa un certificado de una
 autoridad reconocida, que se configurará con Docker.
 
+### Inicio de sesión y roles
+
+El dashboard pide correo y contraseña (CU-00). Cada usuario tiene un rol:
+
+| Rol | Qué puede hacer |
+|---|---|
+| Junta Directiva | ver el tablero |
+| Operador técnico | ver el tablero (y, más adelante, atender las alertas) |
+| Administrador | lo anterior, y en **Usuarios**: crear, editar y desactivar usuarios, cambiarles el rol, restablecer su contraseña, elegir quién recibe por correo las alertas críticas y las predictivas, y ver la bitácora de accesos y cambios (CU-07) |
+
+- **El primer administrador** se crea desde la consola, en `backend/`:
+  `python -m monitoreo.usuarios --crear-admin correo@asada.cr "Nombre Apellido"`. Los demás los
+  crea él desde el dashboard, con una contraseña temporal que cada persona cambia al entrar.
+- **Contraseñas:** al menos 10 caracteres; se guarda solo su hash (scrypt con sal). Con 5
+  intentos fallidos seguidos, ese correo queda bloqueado 15 minutos. El mensaje de error es el
+  mismo si falla el correo o la contraseña.
+- **Sesión:** cookie HttpOnly y SameSite=Strict (Secure con HTTPS) que vence a las 12 h. Al
+  desactivar a alguien o restablecer su contraseña se cierran sus sesiones abiertas. Nadie puede
+  quitarse el rol de administrador a sí mismo, ni desactivar al último administrador activo.
+- **Dónde se guardan:** en `BASE_DE_DATOS` (PostgreSQL en Docker) o, sin ella, en
+  `registros/usuarios.db` (SQLite). `BASE_USUARIOS` permite usar otra base.
+- **Bitácora:** inicios de sesión, intentos fallidos, cierres y cambios de usuarios, con fecha,
+  correo y origen. Se ve en **Usuarios**.
+- `INICIO_SESION=no` en el `.env` deja el dashboard abierto, solo para desarrollo.
+
 ### API del servicio (puerto 8001)
 
 | Ruta | Qué devuelve |
 |---|---|
 | `GET /health` | si el servicio está en pie (`ok` o `degradado` con el motivo), versión, y de cada modelo cargado su huella y la corrida de MLflow que lo generó (`run_id`, experimento y huella de los datos) |
 | `POST /predict/contaminacion` | requiere `X-API-Key`. Con las lecturas de 15 min de toda la red de las últimas 98 h (mismo formato que `POST /lecturas` de la API de datos): probabilidad de evento, tipo sugerido, pronóstico a 24 h y nivel verde, amarillo o rojo por sensor y para la red. 422 con el detalle si faltan columnas, lecturas o datos. El nivel amarillo empieza en `UMBRAL_AMARILLO` (0,5 por defecto) |
-| `GET /api/estado` | hora de los datos, conexión, alarma activa, modo de pronóstico, estado de las alertas |
+| `POST /api/sesion` | inicia sesión con `{"correo", "contrasena"}`; deja la cookie. `GET` dice quién tiene la sesión (401 si nadie) y `DELETE` la cierra |
+| `POST /api/sesion/contrasena` | cambia la contraseña propia: `{"actual", "nueva"}` |
+| `GET, POST /api/usuarios`, `PATCH /api/usuarios/{id}` | solo administrador: lista, crea y modifica usuarios (nombre, rol, activo, notificaciones, contraseña temporal) |
+| `GET /api/bitacora?limite=100` | solo administrador: accesos y cambios, el más reciente primero |
+| `GET /api/estado` | hora de los datos, conexión, alarma activa, modo de pronóstico, estado de las alertas. Desde aquí, todo `/api/...` pide la sesión (401 sin ella) |
 | `POST /predict/fugas` | requiere `X-API-Key`. Con las mismas lecturas, pero de los últimos 8 días: probabilidad de fuga, alarma confirmada, tramo más probable y caudal de más (nivel verde, amarillo o rojo). 422 si falta historia |
 | `GET /api/sensores` | estado actual de los sensores: observado, pronóstico a 24 h, probabilidad de evento |
 | `GET /api/sensores/{nodo}/serie?horas=72` | serie horaria para graficar (observado, pronóstico, probabilidad) |

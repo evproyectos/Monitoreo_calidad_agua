@@ -6,6 +6,8 @@ import DetalleSensor from "./componentes/DetalleSensor.jsx";
 import Alarmas from "./componentes/Alarmas.jsx";
 import AlertasActivas from "./componentes/AlertasActivas.jsx";
 import VistaGeneral, { HORAS } from "./componentes/VistaGeneral.jsx";
+import Usuarios from "./componentes/Usuarios.jsx";
+import Cuenta from "./componentes/Cuenta.jsx";
 import { alertasActivas, resumenRed } from "./estado.js";
 
 // La vista vive en la dirección (#/general, #/fugas o #/sensor/J224): así funcionan el botón
@@ -14,11 +16,12 @@ import { alertasActivas, resumenRed } from "./estado.js";
 function leerRuta() {
   const [, vista, nodo] = window.location.hash.replace(/^#\/?/, "/").split("/");
   if (vista === "sensor") return { vista: "sensor", nodo: nodo || null };
+  if (vista === "usuarios" || vista === "cuenta") return { vista, nodo: null };
   return { vista: "general", nodo: null, fugas: vista === "fugas" };
 }
 
 // Todo se vuelve a consultar solo, cada pocos segundos (RF-003.2: sin recargar, en ≤ 5 min).
-export default function App() {
+export default function App({ sesion, onSalir, onActualizar }) {
   const estado = useConsulta("/api/estado", 2000);
   const sensores = useConsulta("/api/sensores", 2000);
   const alarmas = useConsulta("/api/alarmas", 3000);
@@ -50,7 +53,10 @@ export default function App() {
     if (ruta.fugas) document.getElementById("fugas")?.scrollIntoView({ behavior: "smooth" });
   }, [ruta.fugas, lista.length]);
 
-  const sinServicio = Boolean(estado.error);
+  // sin conexión = la red falló o el servicio respondió con un error suyo (no un 401 o 403)
+  const sinServicio = Boolean(estado.error) && !(estado.error.status < 500);
+  const admin = sesion.permisos.gestionar_usuarios && sesion.inicio_sesion;
+  const vista = ruta.vista === "usuarios" && !admin ? "general" : ruta.vista;
   const alertas = norma ? alertasActivas({ estado: estado.datos, sensores: lista, norma,
                                            anticipacion: anticipacion.datos, fugas: fugas.datos }) : [];
   const resumen = resumenRed({ sinServicio, estado: estado.datos, sensores: lista, alertas });
@@ -63,8 +69,8 @@ export default function App() {
 
   return (
     <div className="app">
-      <Encabezado resumen={resumen} hora={estado.datos?.ultima_hora_procesada} vista={ruta.vista}
-                  sensor={nodo ?? ultimoSensor} />
+      <Encabezado resumen={resumen} hora={estado.datos?.ultima_hora_procesada} vista={vista}
+                  sensor={nodo ?? ultimoSensor} sesion={sesion} onSalir={onSalir} />
       {sinServicio && (
         <p className="aviso">
           Revisa que el servicio esté corriendo: en la carpeta backend, <code>python -m monitoreo.servicio</code>.
@@ -72,12 +78,17 @@ export default function App() {
         </p>
       )}
 
-      {lista.length > 0 && (
+      {vista === "usuarios" && <div className="cuerpo-admin"><Usuarios yo={sesion.usuario} /></div>}
+      {vista === "cuenta" && (
+        <div className="cuerpo-admin"><Cuenta usuario={sesion.usuario} onListo={onActualizar} /></div>
+      )}
+
+      {lista.length > 0 && (vista === "general" || vista === "sensor") && (
         <Tarjetas sensores={lista} red={red.datos} norma={norma} fugas={fugas.datos} estado={estado.datos}
                   elegido={ruta.vista === "sensor" ? nodo : null} onAbrir={abrirSensor} />
       )}
 
-      {lista.length > 0 && ruta.vista === "general" && (
+      {lista.length > 0 && vista === "general" && (
         <div className="cuerpo">
           <VistaGeneral sensores={lista} referencias={referencias.datos} red={red.datos}
                         anticipacion={anticipacion.datos} fugas={fugas.datos} onAbrir={abrirSensor} />
@@ -85,7 +96,7 @@ export default function App() {
         </div>
       )}
 
-      {lista.length > 0 && ruta.vista === "sensor" && (
+      {lista.length > 0 && vista === "sensor" && (
         <div className="cuerpo">
           <DetalleSensor sensor={sensor} referencias={referencias.datos} />
           {lateral}

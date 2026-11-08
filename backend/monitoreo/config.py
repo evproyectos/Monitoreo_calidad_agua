@@ -11,6 +11,9 @@ Configuración del servicio. Cada valor se puede cambiar con una variable de ent
   CLAVE_TLS          relativas a la raíz del proyecto (ver monitoreo/seguridad.py)
   BASE_DE_DATOS      URL de SQLAlchemy donde guardar también los resultados de cada hora (p. ej.
                      postgresql://usuario:clave@servidor/monitoreo); vacía = solo los CSV
+  BASE_USUARIOS      dónde guardar usuarios, sesiones y bitácora del dashboard (por defecto la de
+                     BASE_DE_DATOS o, sin ella, SQLite en registros/usuarios.db)
+  INICIO_SESION      "no" deja el dashboard sin inicio de sesión (solo para desarrollo)
 
 Se pueden poner en el archivo .env de la raíz del proyecto (ver .env.ejemplo).
 """
@@ -65,6 +68,10 @@ class Config:
     trabajadores_prediccion: int = field(default_factory=lambda: int(
         os.environ.get("TRABAJADORES_PREDICCION") or _trabajadores_por_defecto()))
 
+    base_usuarios: Optional[str] = field(default_factory=lambda: os.environ.get("BASE_USUARIOS") or None)
+    inicio_sesion: bool = field(default_factory=lambda: os.environ.get("INICIO_SESION", "si").strip().lower()
+                                not in ("no", "0", "false"))
+
     @property
     def esquema(self):
         return "https" if self.certificado_tls else "http"
@@ -72,3 +79,9 @@ class Config:
     def __post_init__(self):
         if self.modo_pronostico not in ("combinado", "arboles"):
             raise ValueError("MODO_PRONOSTICO debe ser 'combinado' o 'arboles'")
+        if not self.base_usuarios:
+            if self.base_de_datos:
+                self.base_usuarios = self.base_de_datos
+            else:
+                Path(self.carpeta_registros).mkdir(parents=True, exist_ok=True)
+                self.base_usuarios = f"sqlite:///{Path(self.carpeta_registros) / 'usuarios.db'}"

@@ -7,9 +7,9 @@ Clave de API
   equivocada responde 401 y deja constancia del intento en registros/accesos_rechazados.log (la
   clave que se mandó nunca se escribe). Si no hay ninguna clave configurada responde 503: el
   endpoint no queda abierto por olvido.
-  El dashboard (/, /api/...) y /health no piden clave: son de solo lectura y los usa el
-  navegador, que no puede guardar una clave en secreto. En un despliegue se protegen con HTTPS y
-  el acceso al servidor (tarea de Docker).
+  El dashboard (/, /api/...) y /health no piden clave: los usa el navegador, que no puede
+  guardar una clave en secreto. /api/... pide en cambio una sesión de usuario con su rol
+  (monitoreo/usuarios.py); /health queda abierto para Docker y el monitoreo externo.
 
 HTTPS
   Con CERTIFICADO_TLS y CLAVE_TLS (rutas a archivos PEM) el servicio atiende solo por HTTPS, con

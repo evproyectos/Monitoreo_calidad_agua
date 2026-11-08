@@ -31,15 +31,18 @@ import threading
 import time
 from contextlib import asynccontextmanager
 
-from fastapi import Depends, FastAPI, HTTPException, Request
+from fastapi import Depends, FastAPI, HTTPException, Request, Response
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel
+from starlette.concurrency import run_in_threadpool
 
 from calidad_agua import calidad, metas
 
 from monitoreo import __version__, prediccion, seguridad
+from monitoreo import usuarios as usuarios_
 from monitoreo.alertas import Alertas
 from monitoreo.cliente_datos import ClienteDatos
 from monitoreo.config import Config, RAIZ
@@ -50,6 +53,166 @@ from monitoreo.trabajadores import Trabajadores
 REVISAR_MODELOS_S = 600         # cada cuánto se revisa si hay modelos nuevos en la carpeta
 
 DIST = RAIZ / "frontend" / "dist"
+COOKIE = "sesion"
+CACHE_SESION_S = 10             # cuánto se recuerda una sesión sin volver a consultar la base
+
+
+# ---------------------------------------------------------------------------- sesiones (CU-00, CU-07)
+class Credenciales(BaseModel):
+    correo: str
+    contrasena: str
+
+
+class CambioContrasena(BaseModel):
+    actual: str
+    nueva: str
+
+
+class UsuarioNuevo(BaseModel):
+    nombre: str
+    correo: str
+    rol: str
+    contrasena: str
+
+
+class CambiosUsuario(BaseModel):
+    nombre: str | None = None
+    rol: str | None = None
+    activo: bool | None = None
+    notificar_rojo: bool | None = None
+    notificar_amarillo: bool | None = None
+    contrasena: str | None = None
+
+
+SIN_SESION = {"id": 0, "nombre": "Sin inicio de sesión", "correo": None, "rol": "administrador",
+              "rol_nombre": "Administrador", "activo": True, "debe_cambiar": False}
+
+
+def _permisos(u):
+    return {"gestionar_usuarios": u["rol"] == "administrador",
+            "atender_alertas": u["rol"] in ("operador", "administrador")}
+
+
+def _instalar_sesiones(app, cfg, cuentas):
+    """
+    Inicio de sesión del dashboard. Todo /api/... pide una sesión vigente (cookie), salvo
+    /api/sesion (entrar, salir y ver quién está). /api/usuarios y /api/bitacora son solo para el
+    rol administrador. Con una contraseña temporal solo se puede cambiarla. /health, la página del
+    dashboard y /predict (con su clave de API) no cambian. Con INICIO_SESION=no queda todo abierto.
+    """
+    cache, candado = {}, threading.Lock()
+
+    def origen(request):
+        return request.client.host if request.client else None
+
+    def usuario_de(request):
+        if not cfg.inicio_sesion:
+            return SIN_SESION
+        codigo = request.cookies.get(COOKIE)
+        if not codigo:
+            return None
+        with candado:
+            c = cache.get(codigo)
+            if c and c[1] > time.time():
+                return c[0]
+        u = cuentas.de_sesion(codigo)
+        with candado:
+            if u:
+                cache[codigo] = (u, time.time() + CACHE_SESION_S)
+            else:
+                cache.pop(codigo, None)
+        return u
+
+    def olvidar():
+        with candado:
+            cache.clear()
+
+    def error(codigo, mensaje, **extra):
+        return JSONResponse(status_code=codigo, content={"detail": {"error": mensaje, **extra}})
+
+    @app.middleware("http")
+    async def exigir_sesion(request: Request, call_next):
+        ruta = request.url.path
+        if ruta.startswith("/api/") and ruta != "/api/sesion":
+            u = await run_in_threadpool(usuario_de, request)
+            if u is None:
+                return error(401, "Inicia sesión para continuar.")
+            if u["debe_cambiar"] and ruta != "/api/sesion/contrasena":
+                return error(403, "Cambia tu contraseña temporal para continuar.", debe_cambiar=True)
+            if ruta.startswith(("/api/usuarios", "/api/bitacora")) and u["rol"] != "administrador":
+                return error(403, "Esta sección es solo para el administrador.")
+            request.state.usuario = u
+        return await call_next(request)
+
+    def respuesta_usuario(u):
+        return {"inicio_sesion": cfg.inicio_sesion, "usuario": u, "permisos": _permisos(u)}
+
+    @app.get("/api/sesion")
+    def ver_sesion(request: Request):
+        """Quién tiene la sesión abierta (401 si nadie)."""
+        u = usuario_de(request)
+        if u is None:
+            raise HTTPException(401, {"error": "Inicia sesión para continuar."})
+        return respuesta_usuario(u)
+
+    @app.post("/api/sesion", responses={401: {"description": "Correo o contraseña incorrectos"},
+                                        403: {"description": "Cuenta desactivada"},
+                                        429: {"description": "Demasiados intentos fallidos"}})
+    def entrar(datos: Credenciales, request: Request, response: Response):
+        """Inicia sesión con correo y contraseña; deja la sesión en una cookie (CU-00)."""
+        try:
+            codigo, u = cuentas.iniciar_sesion(datos.correo, datos.contrasena, origen(request))
+        except usuarios_.ErrorUsuarios as e:
+            raise HTTPException(e.codigo, {"error": e.mensaje})
+        response.set_cookie(COOKIE, codigo, max_age=int(usuarios_.DURACION_SESION.total_seconds()), httponly=True,
+                            samesite="strict", secure=bool(cfg.certificado_tls), path="/")
+        return respuesta_usuario(u)
+
+    @app.delete("/api/sesion")
+    def salir(request: Request, response: Response):
+        cuentas.cerrar_sesion(request.cookies.get(COOKIE), origen(request))
+        olvidar()
+        response.delete_cookie(COOKIE, path="/")
+        return {"ok": True}
+
+    @app.post("/api/sesion/contrasena")
+    def cambiar_contrasena(datos: CambioContrasena, request: Request):
+        u = request.state.usuario
+        if not u["correo"]:
+            raise HTTPException(400, {"error": "Sin inicio de sesión no hay contraseña que cambiar."})
+        try:
+            nuevo = cuentas.cambiar_propia(u["id"], datos.actual, datos.nueva, origen(request))
+        except usuarios_.ErrorUsuarios as e:
+            raise HTTPException(e.codigo, {"error": e.mensaje})
+        olvidar()
+        return respuesta_usuario(nuevo)
+
+    @app.get("/api/usuarios")
+    def ver_usuarios():
+        return {"usuarios": cuentas.lista(), "roles": usuarios_.ROLES,
+                "minimo_contrasena": usuarios_.MINIMO_CONTRASENA}
+
+    @app.post("/api/usuarios", status_code=201)
+    def crear_usuario(datos: UsuarioNuevo, request: Request):
+        try:
+            return cuentas.crear(datos.nombre, datos.correo, datos.rol, datos.contrasena,
+                                 por=request.state.usuario["correo"], origen=origen(request))
+        except usuarios_.ErrorUsuarios as e:
+            raise HTTPException(e.codigo, {"error": e.mensaje})
+
+    @app.patch("/api/usuarios/{uid}")
+    def modificar_usuario(uid: int, datos: CambiosUsuario, request: Request):
+        try:
+            r = cuentas.modificar(uid, datos.model_dump(exclude_none=True), por=request.state.usuario["correo"],
+                                  origen=origen(request))
+        except usuarios_.ErrorUsuarios as e:
+            raise HTTPException(e.codigo, {"error": e.mensaje})
+        olvidar()
+        return r
+
+    @app.get("/api/bitacora")
+    def ver_bitacora(limite: int = 100):
+        return cuentas.ver_bitacora(max(1, min(limite, 500)))
 
 
 def silenciar_cortes(loop):
@@ -188,6 +351,11 @@ def crear_app(cfg=None):
         estado["s"].detener()
 
     app = FastAPI(title="Monitoreo de calidad de agua", version=__version__, lifespan=ciclo_de_vida)
+    cuentas = usuarios_.Usuarios(cfg.base_usuarios)
+    if cfg.inicio_sesion and not cuentas.hay_usuarios():
+        print("Todavía no hay usuarios del dashboard. Crea el primer administrador (desde backend/):\n"
+              '  python -m monitoreo.usuarios --crear-admin correo@asada.cr "Nombre"', flush=True)
+    _instalar_sesiones(app, cfg, cuentas)
     # en desarrollo el dashboard corre en el servidor de Vite (puerto 5173)
     app.add_middleware(CORSMiddleware, allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
                        allow_methods=["GET"], allow_headers=["*"])

@@ -303,6 +303,92 @@ p.nota { margin: 4px 0 0; }
 .mapa-leyenda .escala i { width: 120px; }
 .mapa-leyenda i.vacia { background: transparent; box-shadow: inset 0 0 0 1px var(--linea); }
 
+/* ---------------------------------------------------------------- sesión, cuenta y usuarios */
+.encabezado .quien { display: flex; align-items: center; gap: 10px; margin-left: auto; }
+.encabezado .vistas { margin-left: auto; }
+.persona { display: flex; align-items: center; gap: 9px; text-decoration: none; color: inherit; padding: 4px 8px 4px 4px; border-radius: 10px; }
+.persona:hover, .persona[aria-current="page"] { background: var(--rejilla); }
+.persona .inicial { width: 32px; height: 32px; border-radius: 50%; display: grid; place-items: center; background: var(--primario); color: #fff; font-weight: 800; }
+.persona b { display: block; font-size: 13.5px; line-height: 1.2; }
+.persona small { display: block; font-size: 12px; color: var(--tinta-2); }
+
+.boton { font: inherit; font-weight: 700; font-size: 14px; padding: 9px 16px; border-radius: 9px; border: 1px solid var(--linea); background: var(--superficie); color: var(--tinta); cursor: pointer; }
+.boton:hover { background: var(--rejilla); }
+.boton.primario { background: var(--primario); border-color: var(--primario); color: #fff; }
+.boton.primario:hover { filter: brightness(1.08); }
+.boton:disabled { opacity: 0.6; cursor: progress; }
+.boton.chico { padding: 6px 11px; font-size: 13px; }
+.boton.ancho { width: 100%; }
+.boton-texto, .enlace { border: 0; background: none; color: var(--primario); font-weight: 700; cursor: pointer; padding: 0 4px; }
+.enlace { text-decoration: underline; }
+
+.campo { display: grid; gap: 5px; font-size: 13px; font-weight: 700; color: var(--tinta-2); }
+.campo input, .campo select, .tabla-usuarios select {
+  font: inherit; font-size: 15px; font-weight: 500; color: var(--tinta); background: var(--superficie);
+  border: 1px solid var(--linea); border-radius: 9px; padding: 9px 11px; width: 100%; min-width: 0;
+}
+.campo input:focus, .campo select:focus, .tabla-usuarios select:focus { outline: 2px solid var(--primario); outline-offset: 0; border-color: var(--primario); }
+.con-boton { position: relative; display: block; }
+.con-boton input { padding-right: 78px; }
+.con-boton .boton-texto { position: absolute; right: 6px; top: 50%; transform: translateY(-50%); font-size: 13px; }
+
+.mensaje { margin: 0; padding: 10px 12px; border-radius: 9px; font-size: 14px; font-weight: 600; }
+.mensaje.error { background: var(--alarma-fondo); color: var(--alarma); }
+.mensaje.ok { background: var(--normal-fondo); color: var(--normal); }
+.mensaje.info { background: var(--rejilla); color: var(--tinta-2); }
+
+.pantalla-sesion { min-height: 100vh; display: grid; place-items: center; padding: 24px 16px; background:
+  radial-gradient(1200px 500px at 50% -10%, color-mix(in srgb, var(--primario) 14%, transparent), transparent 70%), var(--fondo); }
+.tarjeta-sesion { width: min(420px, 100%); display: grid; gap: 16px; background: var(--superficie); border: 1px solid var(--linea); border-radius: 18px; padding: 28px 28px 24px; box-shadow: 0 10px 40px rgba(14, 34, 51, 0.1); }
+.tarjeta-sesion h1 { font-size: 22px; font-weight: 800; letter-spacing: -0.015em; margin-top: 6px; }
+.tarjeta-sesion .nota { margin: 0; }
+
+.formulario { display: grid; gap: 14px; }
+.formulario h1 { font-size: 22px; font-weight: 800; }
+.formulario .nota { margin: 0; }
+.acciones { display: flex; gap: 8px; flex-wrap: wrap; }
+.cuerpo-admin { margin-top: 16px; }
+.cuenta { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.3fr); gap: 32px; max-width: 900px; }
+.cuenta dl { margin: 14px 0 0; display: grid; gap: 10px; }
+.cuenta dt { font-size: 12px; color: var(--tinta-2); font-weight: 700; }
+.cuenta dd { margin: 0; font-weight: 700; }
+
+.administracion { display: grid; gap: 16px; }
+.usuarios .panel-cabeza { align-items: flex-start; }
+.nuevo-usuario { margin-top: 14px; padding: 16px; border-radius: 12px; background: var(--superficie-2); border: 1px solid var(--linea); }
+.nuevo-usuario h3 { font-size: 15px; font-weight: 800; }
+.nuevo-usuario .campos { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 12px; }
+.filtros { display: grid; grid-template-columns: minmax(200px, 2fr) repeat(2, minmax(140px, 1fr)); gap: 12px; margin: 16px 0 6px; max-width: 760px; }
+.usuarios .mensaje { margin-top: 12px; }
+
+.tabla-usuarios { width: 100%; border-collapse: collapse; margin-top: 8px; font-size: 14px; }
+.tabla-usuarios th { text-align: left; font-size: 12px; color: var(--tinta-2); font-weight: 700; padding: 8px 10px; border-bottom: 1px solid var(--linea); }
+.tabla-usuarios td { padding: 12px 10px; border-bottom: 1px solid var(--rejilla); vertical-align: middle; }
+.tabla-usuarios td b { display: block; }
+.tabla-usuarios td > span { display: block; color: var(--tinta-2); font-size: 13px; }
+.tabla-usuarios td .pastilla { display: inline-flex; margin-top: 4px; }
+.tabla-usuarios tr.inactivo td { opacity: 0.62; }
+.tabla-usuarios .tu { font-weight: 500; color: var(--tinta-2); }
+.tabla-usuarios select { width: auto; padding: 6px 9px; font-size: 14px; }
+.casilla { display: flex; align-items: center; gap: 7px; font-size: 13.5px; cursor: pointer; padding: 2px 0; }
+.casilla input { width: 16px; height: 16px; accent-color: var(--primario); }
+.punto { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
+.punto.rojo { background: var(--alarma); }
+.punto.amarillo { background: var(--atencion-punto); }
+.acciones-fila { text-align: right; white-space: nowrap; }
+.acciones-fila .boton + .boton { margin-left: 6px; }
+.acciones-fila a.boton { text-decoration: none; display: inline-block; }
+.tabla-usuarios select:disabled { opacity: 0.7; cursor: not-allowed; }
+.solo-lector { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+.restablecer { margin-top: 12px; padding: 14px 16px; border-radius: 12px; background: var(--superficie-2); border: 1px solid var(--linea); display: grid; gap: 10px; max-width: 460px; }
+
+.lista-bitacora { list-style: none; margin: 10px 0 0; padding: 0; display: grid; max-height: 420px; overflow-y: auto; }
+.lista-bitacora li { display: grid; grid-template-columns: 150px minmax(0, 1fr); gap: 0 14px; padding: 8px 0; border-bottom: 1px solid var(--rejilla); font-size: 13.5px; }
+.lista-bitacora time { grid-row: span 3; color: var(--tinta-2); font-size: 12.5px; }
+.lista-bitacora .que { font-weight: 700; }
+.lista-bitacora .quien, .lista-bitacora .detalle { color: var(--tinta-2); font-size: 12.5px; }
+.lista-bitacora li.alerta .que { color: var(--atencion); }
+
 /* ---------------------------------------------------------------- pantallas angostas */
 @media (max-width: 1100px) {
   .cuerpo { grid-template-columns: 1fr; }
@@ -313,6 +399,19 @@ p.nota { margin: 4px 0 0; }
 }
 @media (max-width: 640px) {
   .app { padding: 12px 16px 32px; }
+  .encabezado .quien { width: 100%; justify-content: space-between; margin-left: 0; }
+  .tarjeta-sesion { padding: 22px 18px 18px; }
+  .cuenta { grid-template-columns: 1fr; gap: 18px; }
+  .filtros { grid-template-columns: 1fr 1fr; }
+  .filtros .campo:first-child { grid-column: 1 / -1; }
+  .tabla-usuarios thead { display: none; }
+  .tabla-usuarios, .tabla-usuarios tbody, .tabla-usuarios tr, .tabla-usuarios td { display: block; }
+  .tabla-usuarios tr { padding: 10px 0; border-bottom: 1px solid var(--linea); }
+  .tabla-usuarios td { border: 0; padding: 4px 0; }
+  .tabla-usuarios td[data-etq]:not([data-etq="Persona"])::before { content: attr(data-etq); display: block; font-size: 12px; color: var(--tinta-2); font-weight: 700; margin-bottom: 2px; }
+  .acciones-fila { text-align: left; white-space: normal; }
+  .lista-bitacora li { grid-template-columns: 1fr; }
+  .lista-bitacora time { grid-row: auto; }
   .vistas { width: 100%; }
   .vistas a { flex: 1; text-align: center; padding: 7px 8px; }
   .resumen-red { grid-template-columns: auto minmax(0, 1fr); padding: 14px 16px; }

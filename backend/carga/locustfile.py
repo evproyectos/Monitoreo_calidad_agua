@@ -6,6 +6,8 @@ Con el servicio y la API de datos corriendo (y CLAVES_API configurada), desde ba
 
     pip install locust
     set CLAVE_API=<una de las claves de CLAVES_API>          (PowerShell: $env:CLAVE_API="...")
+    set CORREO_CARGA=<correo de un usuario del dashboard>    (para GET /api/estado, que pide sesión)
+    set CONTRASENA_CARGA=<su contraseña>
     locust -f carga/locustfile.py --host https://127.0.0.1:8001 --headless -u 10 -r 2 -t 5m ^
            --csv ../docs/rendimiento/carga
 
@@ -24,6 +26,9 @@ from locust import HttpUser, between, events, task
 
 URL_DATOS = os.environ.get("URL_DATOS", "http://127.0.0.1:8000")
 CLAVE = os.environ.get("CLAVE_API", "")
+# el dashboard pide inicio de sesión: con estas dos variables cada usuario simulado entra una vez
+CORREO = os.environ.get("CORREO_CARGA", "")
+CONTRASENA = os.environ.get("CONTRASENA_CARGA", "")
 LECTURAS = {}
 
 
@@ -50,6 +55,8 @@ class Cliente(HttpUser):
         if self.host.startswith("https"):           # certificado autofirmado del servicio
             self.client.verify = False
             urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+        self.con_sesion = bool(CORREO) and self.client.post(
+            "/api/sesion", json={"correo": CORREO, "contrasena": CONTRASENA}, name="POST /api/sesion").ok
 
     @task(3)
     def contaminacion(self):
@@ -63,4 +70,5 @@ class Cliente(HttpUser):
 
     @task(2)
     def estado(self):
-        self.client.get("/api/estado", name="GET /api/estado")
+        if self.con_sesion:                          # sin sesión el dashboard responde 401
+            self.client.get("/api/estado", name="GET /api/estado")
