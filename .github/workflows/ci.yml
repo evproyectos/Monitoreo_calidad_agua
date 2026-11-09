@@ -20,10 +20,17 @@ jobs:
         with:
           python-version: "3.13"
           cache: pip
+      # calidad_agua sale de la rama del mismo nombre en el repositorio de modelos (p. ej. tres-nodos),
+      # porque el servicio y los modelos cambian juntos; si esa rama no existe allá, de main
       - name: Instalar (con el paquete calidad_agua del repositorio de modelos)
+        env:
+          RAMA: ${{ github.head_ref || github.ref_name }}
         run: |
           pip install -r requirements-dev.txt
-          pip install "calidad-agua[red] @ git+https://github.com/evproyectos/Modelo_calidad_agua.git"
+          MODELOS=https://github.com/evproyectos/Modelo_calidad_agua.git
+          if git ls-remote --exit-code --heads "$MODELOS" "$RAMA" > /dev/null; then REF="$RAMA"; else REF=main; fi
+          echo "calidad_agua de la rama $REF de Modelo_calidad_agua"
+          pip install "calidad-agua[red] @ git+$MODELOS@$REF"
       - name: Estilo (flake8)
         run: flake8
       - name: Pruebas y cobertura (mínimo 70 %)
