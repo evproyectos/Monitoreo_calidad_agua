@@ -24,7 +24,8 @@ function Curva({ valores, minimo, color, alto = 44 }) {
 }
 
 function Semaforo({ nivel }) {
-  return <span className={`pastilla nivel-${nivel}`}><i aria-hidden="true" />{NIVELES[nivel].texto}</span>;
+  const n = NIVELES[nivel];
+  return <span className={`pastilla nivel-${nivel}`} title={n.texto}><i aria-hidden="true" />{n.corto ?? n.texto}</span>;
 }
 
 function TarjetaSensor({ s, red, norma, elegido, onAbrir, posicion }) {

@@ -1,21 +1,34 @@
 // Semáforo del dashboard (RF-003.2 a): verde = normal, amarillo = alerta predictiva,
 // rojo = alerta crítica, gris = sin dato. Y la lista de alertas activas ordenada por severidad y
 // antelación (RF-003.2 c).
+//
+// "Habitual": un punto que en operación normal ya está fuera de la norma (su valor típico lo
+// está, como el cloro bajo al final de la red). Se muestra en su tarjeta y en la lista, pero no
+// pone la red en rojo: si no, el semáforo quedaría en rojo siempre y taparía los eventos reales.
+// Si en ese punto hay además una alarma del detector, sí es rojo.
 import { enFrase, fueraDeNorma, PARAMETROS, TIPOS } from "./formato.js";
 
 export const NIVELES = {
   rojo: { texto: "Alerta crítica", orden: 0 },
   amarillo: { texto: "Alerta predictiva", orden: 1 },
+  habitual: { texto: "Fuera de norma habitual", corto: "Habitual", orden: 1.5 },
   verde: { texto: "Normal", orden: 2 },
   gris: { texto: "Sin dato", orden: 3 },
 };
 
 const PARS = ["CL2", "TURB", "PH"];
 
+// el valor típico del punto ya está fuera de la norma en ese parámetro
+export function habitual(s, p, norma) {
+  const t = s?.tipicos?.[p] ?? (p === "CL2" ? s?.cloro_tipico : null);
+  return t != null && Boolean(fueraDeNorma(p, t, norma));
+}
+
 export function nivelSensor(s, norma) {
   if (!s || (s.CL2 == null && s.TURB == null && s.PH == null)) return "gris";
-  if (s.en_alarma || PARS.some((p) => fueraDeNorma(p, s[p], norma))) return "rojo";
-  if (PARS.some((p) => fueraDeNorma(p, s[`pronostico_${p}`], norma))) return "amarillo";
+  if (s.en_alarma || PARS.some((p) => fueraDeNorma(p, s[p], norma) && !habitual(s, p, norma))) return "rojo";
+  if (PARS.some((p) => fueraDeNorma(p, s[`pronostico_${p}`], norma) && !habitual(s, p, norma))) return "amarillo";
+  if (PARS.some((p) => fueraDeNorma(p, s[p], norma))) return "habitual";
   return "verde";
 }
 
@@ -50,7 +63,12 @@ export function alertasActivas({ estado, sensores, norma, anticipacion, fugas })
                  : "El caudal de la fuente no se comporta como de costumbre." });
   }
   sensores.forEach((s) => PARS.forEach((p) => {
-    if (fueraDeNorma(p, s[p], norma)) {
+    if (fueraDeNorma(p, s[p], norma) && habitual(s, p, norma)) {
+      const t = s.tipicos?.[p] ?? s.cloro_tipico;
+      out.push({ nivel: "habitual", antelacion_h: 0, sensor: s.nodo, titulo: `${problema(p, s[p], norma[p])} habitual en ${s.nodo}`,
+                 detalle: `En este punto ${PARAMETROS[p].nombre.toLowerCase()} está fuera de la norma casi siempre (típico ${t}): `
+                   + "no es un evento nuevo, pero conviene revisar ese sector (por ejemplo, la cloración)." });
+    } else if (fueraDeNorma(p, s[p], norma)) {
       out.push({ nivel: "rojo", antelacion_h: 0, sensor: s.nodo, titulo: `${problema(p, s[p], norma[p])} en ${s.nodo}`,
                  detalle: `${PARAMETROS[p].nombre} fuera de la norma de agua potable.` });
     }
@@ -66,7 +84,7 @@ export function alertasActivas({ estado, sensores, norma, anticipacion, fugas })
     }
   });
   sensores.forEach((s) => PARS.forEach((p) => {
-    if (!fueraDeNorma(p, s[p], norma) && fueraDeNorma(p, s[`pronostico_${p}`], norma)) {
+    if (!fueraDeNorma(p, s[p], norma) && fueraDeNorma(p, s[`pronostico_${p}`], norma) && !habitual(s, p, norma)) {
       out.push({ nivel: "amarillo", antelacion_h: 24, sensor: s.nodo,
                  titulo: `${problema(p, s[`pronostico_${p}`], norma[p])} en ${s.nodo}`,
                  detalle: `El pronóstico sale de norma en las próximas 24 h.` });
@@ -81,8 +99,14 @@ export function resumenRed({ sinServicio, estado, sensores, alertas }) {
   if (!estado) return { nivel: "gris", texto: "Conectando con el servicio…" };
   if (!estado.conectado_a_datos) return { nivel: "gris", texto: "No están llegando datos de los sensores" };
   if (!sensores.length) return { nivel: "gris", texto: "Esperando las primeras lecturas" };
-  const peor = alertas[0];
-  if (!peor) return { nivel: "verde", texto: `Agua dentro de norma en los ${sensores.length} puntos de medición` };
-  const mas = alertas.length > 1 ? ` y ${alertas.length - 1} alerta${alertas.length > 2 ? "s" : ""} más` : "";
+  const reales = alertas.filter((a) => a.nivel !== "habitual");
+  const habituales = alertas.filter((a) => a.nivel === "habitual");
+  const peor = reales[0];
+  if (!peor) {
+    const puntos = new Set(habituales.map((a) => a.sensor));
+    const nota = habituales.length ? ` · ${lista(habituales.map((a) => a.titulo.replace(" habitual en ", " en ")))}, como siempre` : "";
+    return { nivel: "verde", texto: `Agua dentro de norma en ${puntos.size ? `${sensores.length - puntos.size} de ` : "los "}${sensores.length} puntos de medición${nota}` };
+  }
+  const mas = reales.length > 1 ? ` y ${reales.length - 1} alerta${reales.length > 2 ? "s" : ""} más` : "";
   return { nivel: peor.nivel, texto: `${peor.titulo}${mas}` };
 }

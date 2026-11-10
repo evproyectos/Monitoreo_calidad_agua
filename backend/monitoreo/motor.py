@@ -4,7 +4,9 @@ Motor de monitoreo en vivo.
   1. recibir(fecha, valores): guarda cada lectura de 15 min (todos los sensores) en memoria.
   2. procesar(): toma TODAS las horas ya cerradas que falten por procesar (una hora se cierra
      cuando llega una lectura de la hora siguiente) y, de una sola vez:
-       - limpia las lecturas con las reglas de operación (calidad.lecturas_operativas);
+       - limpia las lecturas con las reglas de operación y el preprocesamiento: quita los picos
+         (IQR), interpola los huecos de hasta 30 min y marca los más largos
+         (calidad.lecturas_operativas, RF-001.3);
        - arma las variables con las mismas funciones del entrenamiento, sobre las últimas
          `historia_h` horas;
        - pronostica cloro, turbidez y pH a 24 h para cada sensor;
@@ -86,6 +88,7 @@ class Motor:
         self.primera_lectura = None
         self.ultima_hora_procesada = None
         self.lecturas_recibidas = 0
+        self.imputacion = {}                  # flag_imputacion de las lecturas del último ciclo
         self.inicio_reloj = time.time()
 
         # estado de las alarmas
@@ -191,8 +194,13 @@ class Motor:
             return []
         desde = horas[0] - pd.Timedelta(hours=self.cfg.historia_h) + pd.Timedelta(minutes=15)
         hasta = horas[-1] + pd.Timedelta(minutes=45)
-        ventana = carga.filtrar_sensores(self.bufer.loc[desde:hasta], self.sensores)
-        w15 = calidad.lecturas_operativas(ventana)
+        # el preprocesamiento (picos e interpolación) mira las lecturas vecinas: se le pasan las que
+        # ya llegaron después de la hora (hasta 30 min) y después se recorta
+        extra = hasta + pd.Timedelta(minutes=30)
+        ventana = carga.filtrar_sensores(self.bufer.loc[desde:extra], self.sensores)
+        w15 = calidad.lecturas_operativas(ventana).loc[:hasta]
+        self.imputacion = w15["flag_imputacion"].loc[horas[0]:].value_counts().to_dict() \
+            if "flag_imputacion" in w15 else {}
 
         pron = self.modelos.pronosticar(variables.horario(w15), horas)
         hd = detector.horario(w15)
@@ -501,7 +509,10 @@ class Motor:
         tip = self.modelos.tipicos
         filas = []
         for n in self.sensores:
-            fila = {"nodo": n, "hora": str(hora), "cloro_tipico": round(float(tip[("CL2", n)]), 3)}
+            fila = {"nodo": n, "hora": str(hora), "cloro_tipico": round(float(tip[("CL2", n)]), 3),
+                    # valor típico en operación normal: si ya está fuera de la norma, el incumplimiento
+                    # es habitual en ese punto (el dashboard no lo trata como alerta crítica)
+                    "tipicos": {par: _num(tip.get((par, n))) for par in SALIDAS}}
             for par in SALIDAS:
                 fila[par] = _num(p[f"base_{par}"].get(n))
                 fila[f"pronostico_{par}"] = _num(p[par].get(n))
@@ -591,6 +602,8 @@ class Motor:
                 "anticipacion": getattr(self.modelos, "anticipacion", None) is not None,
                 "avisos_anticipados_activos": sorted(a["tipo"] for a in self.avisos_abiertos.values()),
                 "sensores": list(self.sensores),
+                # lecturas del último ciclo: cuántas filas medidas, con algo rellenado o con un hueco largo
+                "imputacion_ultimo_ciclo": {str(k): int(v) for k, v in self.imputacion.items()},
                 "fugas": getattr(self.modelos, "fugas", None) is not None,
                 "fuga_activa": self.fuga_abierta is not None}
 

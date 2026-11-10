@@ -5,7 +5,7 @@ import time
 import pandas as pd
 import pytest
 
-from conftest import INICIO, ModelosFalsos, lecturas
+from conftest import INICIO, SENSORES, ModelosFalsos, lecturas
 from monitoreo import alertas
 from monitoreo.motor import Motor
 
@@ -274,3 +274,19 @@ def test_asunto_del_aviso_anticipado_y_varios_sensores(cfg, al):
                             "empezaría en la planta (J280)")
     assert alertas._nodos(["J439", "J224", "J69"]) == "J439 y 2 sensores más"
     assert alertas._nodos(["J439", "J224"]) == "J439 y 1 sensor más" and alertas._nodos(["J1"]) == "J1"
+
+
+def test_sin_aviso_de_riesgo_donde_el_cloro_siempre_esta_bajo(cfg, al):
+    """Al final de la red el cloro típico ya está bajo la norma: no es un riesgo nuevo cada día."""
+    modelos = ModelosFalsos(pronostico_24h={"J20": {"CL2": 0.15}, "J10": {"CL2": 0.2}})
+    normales = (("CL2", 0.6), ("TURB", 0.5), ("PH", 7.2), ("TEMP", 25.0))
+    modelos.tipicos = {(p, n): v for n in SENSORES for p, v in normales}
+    modelos.tipicos[("CL2", "J20")] = 0.16
+    correr(Motor(cfg, modelos, registrar=False), al, 7)
+    (riesgo,) = [t for t in al.textos if "Riesgo en 24 h" in t]
+    assert "<b>J10</b>" in riesgo and "J20" not in riesgo
+
+
+def test_nombres_en_minuscula_sin_romper_el_ph():
+    assert alertas._minus("Falla de pH") == "falla de pH"
+    assert alertas._minus("Turbidez en la fuente") == "turbidez en la fuente"

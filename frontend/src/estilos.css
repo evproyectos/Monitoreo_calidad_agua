@@ -142,6 +142,7 @@ h1, h2, h3 { margin: 0; line-height: 1.2; }
 .tarjeta.elegida { outline: 2px solid var(--primario); outline-offset: 2px; }
 .tarjeta.nivel-verde { --c: var(--normal-punto); }
 .tarjeta.nivel-amarillo { --c: var(--atencion-punto); }
+.tarjeta.nivel-habitual { --c: var(--sin-dato); }
 .tarjeta.nivel-rojo { --c: var(--alarma); }
 .tarjeta-cabeza { display: flex; justify-content: space-between; align-items: flex-start; gap: 8px; }
 .tarjeta .nodo { font-weight: 800; font-size: 17px; }
@@ -161,6 +162,7 @@ h1, h2, h3 { margin: 0; line-height: 1.2; }
 .pastilla i { width: 8px; height: 8px; border-radius: 50%; background: currentColor; }
 .pastilla.nivel-verde { background: var(--normal-fondo); color: var(--normal); }
 .pastilla.nivel-amarillo { background: var(--atencion-fondo); color: var(--atencion); }
+.pastilla.nivel-habitual { background: var(--rejilla); color: var(--tinta-2); }
 .pastilla.nivel-rojo { background: var(--alarma-fondo); color: var(--alarma); }
 
 /* ---------------------------------------------------------------- cuerpo */
@@ -183,6 +185,7 @@ p.nota { margin: 4px 0 0; }
 .lista-alertas li { --c: var(--sin-dato); --f: var(--superficie-2); }
 .lista-alertas li.nivel-rojo { --c: var(--alarma); --f: var(--alarma-fondo); }
 .lista-alertas li.nivel-amarillo { --c: var(--atencion); --f: var(--atencion-fondo); }
+.lista-alertas li.nivel-habitual { --c: var(--tinta-2); --f: var(--superficie-2); }
 .lista-alertas li > * {
   display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 2px 10px; width: 100%; text-align: left;
   padding: 10px 12px; border: 0; border-left: 4px solid var(--c); border-radius: var(--radio-2); background: var(--f);

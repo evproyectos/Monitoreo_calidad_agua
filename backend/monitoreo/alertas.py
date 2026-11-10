@@ -171,6 +171,11 @@ def _llegada(motor, ya):
     return [(nodo, horas) for nodo, horas in orden.items() if nodo not in ya and horas > 0]
 
 
+def _minus(texto):
+    """Primera letra en minúscula, sin tocar el resto ("Falla de pH" -> "falla de pH")."""
+    return texto[:1].lower() + texto[1:]
+
+
 def _nodos(nodos, maximo=1):
     """['J439', 'J224', 'J69'] -> 'J439 y 2 sensores más' (para el asunto del correo)."""
     nodos = list(nodos)
@@ -456,7 +461,7 @@ class Alertas:
         nombre = TIPOS.get(tipo, "Evento fuera de lo normal") if tipo != "anomalia" else "Operación fuera de lo normal"
         planta = tipo in EMPIEZAN_EN_LA_FUENTE
         return {"grupo": f"aviso:{tipo}", "inicio": n["hora"], "tipo": "aviso", "evento": tipo,
-                "titulo": f"Posible {nombre.lower()} en las próximas 24 h",
+                "titulo": f"Posible {_minus(nombre)} en las próximas 24 h",
                 "lugar": "Empezaría en la planta (J280)" if planta else "Toda la red",
                 "nodos": ["J280"] if planta else [], "probabilidad": n["probabilidad"], "antelacion_h": 24,
                 "parametros": f"Señal: {SENALES.get(tipo, SENALES['anomalia'])}",
@@ -485,7 +490,7 @@ class Alertas:
             lineas.append("Evento local: afecta el agua que pasa por esos sensores.")
         lineas.append(f"<b>Qué hacer:</b> {ACCION_ALARMA.get(tipo, ACCION_ALARMA['?'])}.")
         lineas.append(f"{self.url}/#/sensor/{orden[0]}")
-        asunto = f"Alerta roja · Alarma #{n['id']}: {tipo_txt.lower()} en {_nodos(orden)}"
+        asunto = f"Alerta roja · Alarma #{n['id']}: {_minus(tipo_txt)} en {_nodos(orden)}"
         return "\n".join(lineas), "rojo", asunto
 
     def _texto_fuga(self, n):
@@ -522,12 +527,12 @@ class Alertas:
         nombre = TIPOS.get(a["tipo_sugerido"], a["tipo_sugerido"])
         return (f"🟢 <b>Alarma #{a['id']} cerrada</b> · {html.escape(nombre)}\n"
                 f"De {_fecha(a['inicio'])} a {_fecha(a['fin'])} ({a['horas']} h) · sensores: {a['sensores']}"), \
-            "rojo", f"Alarma #{a['id']} cerrada · {nombre.lower()} · {a['sensores']}"
+            "rojo", f"Alarma #{a['id']} cerrada · {_minus(nombre)} · {a['sensores']}"
 
     def _texto_aviso(self, motor, n):
         tipo = n["tipo"]
         nombre = TIPOS.get(tipo, "Evento fuera de lo normal") if tipo != "anomalia" else "Operación fuera de lo normal"
-        lineas = [f"🟡 <b>Aviso anticipado: posible {html.escape(nombre.lower())} en las próximas 24 h</b>",
+        lineas = [f"🟡 <b>Aviso anticipado: posible {html.escape(_minus(nombre))} en las próximas 24 h</b>",
                   f"{_fecha(n['hora'])} · probabilidad {_pct(n['probabilidad'])} (umbral {_pct(n['umbral'])})",
                   f"Señal: {SENALES.get(tipo, SENALES['anomalia'])}."]
         llegadas = _llegada(motor, set()) if tipo in EMPIEZAN_EN_LA_FUENTE else []
@@ -537,13 +542,18 @@ class Alertas:
         lineas.append(f"<b>Qué hacer:</b> {ACCION_AVISO.get(tipo, ACCION_AVISO['anomalia'])}.")
         lineas.append(self.url)
         donde = " · empezaría en la planta (J280)" if tipo in EMPIEZAN_EN_LA_FUENTE else " · toda la red"
-        asunto = f"Alerta amarilla · Posible {nombre.lower()} en las próximas 24 h{donde}"
+        asunto = f"Alerta amarilla · Posible {_minus(nombre)} en las próximas 24 h{donde}"
         return "\n".join(lineas), "amarillo", asunto
 
     def _revisar_riesgo(self, motor, sensores, ahora, horas_nuevas=1):
         nuevos = []
+        tipicos = getattr(motor.modelos, "tipicos", {}) or {}
         for nodo, s in sensores.items():
             for par in ["CL2", "TURB", "PH"]:
+                # un sensor que en operación normal ya está fuera de la norma (el cloro bajo al final
+                # de la red) no es un riesgo nuevo cada día: el tablero lo muestra, pero no se avisa
+                if fuera_de_norma(par, tipicos.get((par, nodo))):
+                    continue
                 limite = fuera_de_norma(par, s.get(f"pronostico_{par}"))
                 clave = (nodo, par)
                 if limite:
@@ -611,7 +621,7 @@ class Alertas:
         if self.con_riesgo:
             lineas.append("Con riesgo en 24 h: " + (", ".join(riesgo) if riesgo else "ninguno"))
         if getattr(motor.modelos, "anticipacion", None) is not None:
-            activos = [TIPOS.get(a["tipo"], "anomalía").lower() for a in motor.avisos_abiertos.values()]
+            activos = [_minus(TIPOS.get(a["tipo"], "anomalía")) for a in motor.avisos_abiertos.values()]
             lineas.append("Avisos anticipados activos: " + (", ".join(activos) if activos else "ninguno"))
         lineas.append(self.url)
         cuantas = f"{len(alarmas)} alarma{'s' if len(alarmas) != 1 else ''} en 24 h"

@@ -209,3 +209,28 @@ def test_deriva_de_los_datos_cada_dia(cfg):
     assert [c for c, _ in derivas[0]["columnas"]] == ["CL2_J10"]
     estados = {c["columna"]: c["estado"] for c in m.ultima_deriva["columnas"]}
     assert estados["CL2_J10"] == "deriva" and estados["CL2_J280"] == "estable"
+
+
+def test_en_vivo_el_preprocesamiento_usa_las_lecturas_que_llegan_despues(cfg):
+    """La última lectura de una hora (xx:45) se revisa y se rellena con las de la hora siguiente."""
+    vistos = []
+
+    class Espia(ModelosFalsos):
+        def detectar(self, hd, horas):
+            vistos.append(hd.copy())
+            return super().detectar(hd, horas)
+
+    lec = lecturas(4)
+    k = 2 * 4 + 3                                          # 02:45
+    normal_turb = lec[k]["valores"]["TURB_J10"]
+    lec[k]["valores"]["TURB_J10"] = normal_turb + 6.0      # pico de turbidez del sensor
+    lec[k]["valores"]["CL2_J20"] = None                    # y una lectura de cloro que no llegó
+    motor = Motor(cfg, Espia(), registrar=False)
+    for x in lec[:k + 3]:                                  # hasta las 03:15: la hora 2 ya está cerrada
+        motor.recibir(x["fecha"], x["valores"])
+    motor.procesar()
+    hd = vistos[-1]
+    turb = [lec[2 * 4 + j]["valores"]["TURB_J10"] for j in range(3)]
+    assert hd.loc[hora(2), "TURB_J10"] < max(turb) + 1      # el pico no entró al promedio de la hora
+    assert hd.loc[hora(2), "lecturas_J20"] == 4             # el cloro faltante se interpoló
+    assert motor.estado()["imputacion_ultimo_ciclo"].get("interpolado", 0) >= 1

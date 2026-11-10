@@ -1,7 +1,8 @@
 # Monitoreo de calidad de agua
 
-Servicio en vivo para una red con **tres puntos de medición** (la salida de la fuente J280, con
-el caudalímetro, y los puntos J224 y J237 de la red): recibe las lecturas cada 15 minutos,
+Servicio en vivo para una red con **10 puntos de medición** (la salida de la fuente J280, con
+el caudalímetro, y 9 puntos de la red; la ubicación es provisional mientras la ASADA define dónde
+van, ver `Modelo_calidad_agua`): recibe las lecturas cada 15 minutos,
 pronostica cloro, turbidez y pH a 24 h, **avisa antes** de que empiece un evento (próximas 24 h),
 detecta eventos de calidad y **fugas** (con el tramo entre sensores donde está la fuga) y abre
 alarmas. Los sensores del sistema son los del detector entrenado; si la API de datos manda más
@@ -432,8 +433,12 @@ faltan por atender, y el botón de cada correo lleva directo a su alerta.
 - En cada ciclo se procesan **juntas todas las horas cerradas pendientes**: armar las
   variables cuesta casi lo mismo para una hora que para muchas, así que el motor no se
   queda atrás aunque los datos lleguen acelerados (~70 ms por hora).
-- Las variables se arman con las últimas **96 h** de lecturas, limpiadas solo con las
-  reglas de operación (presión, rango físico, sensor pegado).
+- Las variables se arman con las últimas **96 h** de lecturas, limpiadas con las reglas de
+  operación (presión, rango físico, sensor pegado) y el **preprocesamiento** (RF-001.3): quita los
+  picos de cloro, turbidez, pH y temperatura por IQR, interpola los huecos de hasta 30 min y marca
+  los más largos (`flag_imputacion`). Es el mismo código del entrenamiento
+  (`calidad.lecturas_operativas`). `/api/estado` dice en `imputacion_ultimo_ciclo` cuántas filas
+  del último ciclo llegaron completas, con algo rellenado o con un hueco largo.
 - **Calentamiento:** al arrancar, hasta tener 96 h de datos no se encienden alarmas y los
   pronósticos se marcan como `calentando`.
 - **Alarmas** (igual que en el notebook 07): un sensor entra en alarma si su probabilidad
