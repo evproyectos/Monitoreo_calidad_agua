@@ -285,11 +285,12 @@ class _Envio:
                 if intento < len(esperas):
                     time.sleep(esperas[intento])
                 continue
-            self.enviadas += 1
+            # primero el registro y después el contador: quien vea el contador ya encuentra el registro
             self._anotar(aviso, "enviada", para, intento + 1)
+            self.enviadas += 1
             return True
-        self.fallidas += 1
         self._anotar(aviso, "fallida", getattr(aviso, "pendientes", None), len(esperas) + 1, self.ultimo_error)
+        self.fallidas += 1
         print(f"[alerta no enviada por {self.canal.nombre}] {aviso.asunto}: {self.ultimo_error}", flush=True)
         return False
 
