@@ -50,6 +50,7 @@ services:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/estado', timeout=4)"]
       interval: 10s
       retries: 10
+    restart: unless-stopped        # si se cae, Docker lo levanta de nuevo (RNF-002)
 
   emisor:
     profiles: ["simulador"]
@@ -76,6 +77,7 @@ services:
       test: ["CMD-SHELL", "pg_isready -U monitoreo -d monitoreo"]
       interval: 5s
       retries: 20
+    restart: unless-stopped        # si se cae, Docker lo levanta de nuevo (RNF-002)
 
   monitoreo:
     build:
@@ -100,6 +102,7 @@ services:
       preparar: {condition: service_completed_successfully}
       datos: {condition: service_healthy, required: false}      # solo con el perfil simulador
       db: {condition: service_healthy}
+    restart: unless-stopped        # si se cae, Docker lo levanta de nuevo (RNF-002)
 
   mlflow:
     build:
@@ -118,6 +121,7 @@ services:
       - ../Modelo_calidad_agua:/modelo
     depends_on:
       preparar: {condition: service_completed_successfully}
+    restart: unless-stopped        # si se cae, Docker lo levanta de nuevo (RNF-002)
 
   # correo de prueba (opcional): con SMTP_SERVIDOR=mailpit, SMTP_PUERTO=1025, SMTP_SEGURIDAD=ninguna
   # y SMTP_REMITENTE=alertas@asada.local en el .env, los correos llegan aquí y no a nadie de verdad
@@ -125,6 +129,7 @@ services:
     image: axllent/mailpit:v1.28.2
     profiles: ["correo"]
     ports: ["127.0.0.1:8025:8025"]
+    restart: unless-stopped        # si se cae, Docker lo levanta de nuevo (RNF-002)
 
 volumes:
   db:

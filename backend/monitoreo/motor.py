@@ -58,9 +58,16 @@ DIAS_DERIVA = 7
 DIAS_LLUVIA = 31               # historia de lluvia para la variable de 30 días de la anticipación
 
 
+def _columnas_fugas(hd):
+    """Las columnas horarias que usa el modelo de fugas: caudal, presión, temperatura de la fuente y lluvia."""
+    return [c for c in hd.columns if c.startswith(("Q_", "P_")) or c in (f"TEMP_{fugas_.FUENTE}", "lluvia_mm_h")]
+
+
 class Registro:
     """CSV que se escribe a medida que ocurren las cosas (y la misma tabla en la base de datos, si
     hay una: ver monitoreo/base_datos.py)."""
+
+    MAX_PENDIENTES = 50_000           # filas en espera si la base no responde (todas quedan en el CSV)
 
     def __init__(self, ruta, columnas, base=None):
         self.f = open(ruta, "w", newline="", encoding="utf-8")
@@ -68,12 +75,31 @@ class Registro:
         self.w.writeheader()
         self.columnas, self.base = columnas, base
         self.tabla = os.path.splitext(os.path.basename(ruta))[0]
+        self.pendientes, self.error_base = [], None
 
     def escribir(self, filas):
+        """
+        El CSV de la sesión siempre; la base, si responde. Si no (RNF-002), las filas quedan en
+        espera y se escriben con las siguientes: una base caída no detiene el monitoreo ni repite horas.
+        """
         self.w.writerows(filas)
         self.f.flush()
-        if self.base is not None:
-            self.base.escribir(self.tabla, [{c: f.get(c) for c in self.columnas} for f in filas])
+        if self.base is None:
+            return
+        self.pendientes += [{c: f.get(c) for c in self.columnas} for f in filas]
+        try:
+            self.base.escribir(self.tabla, self.pendientes)
+        except Exception as e:
+            if self.error_base is None:
+                print(f"No se pudo escribir {self.tabla} en la base ({type(e).__name__}); las filas esperan "
+                      "y están en el CSV de la sesión", flush=True)
+            self.error_base = str(e)[:200]
+            self.pendientes = self.pendientes[-self.MAX_PENDIENTES:]
+            return
+        if self.error_base is not None:
+            print(f"Base de datos de nuevo disponible: {len(self.pendientes)} filas de {self.tabla} escritas",
+                  flush=True)
+        self.pendientes, self.error_base = [], None
 
 
 class Motor:
@@ -106,6 +132,7 @@ class Motor:
         self.avisos = []
         self.ultima_anticipacion = {}
         self.lluvia_horaria = pd.Series(dtype="float64")
+        self._rearmar_historia = False
         self.anticipaciones = []                  # probabilidades por hora y tipo (DataFrames por lote)
 
         # estado de las fugas
@@ -172,6 +199,42 @@ class Motor:
         if self.columnas is None:
             self.columnas = list(self.bufer.columns)
 
+    def reanudar(self, hora):
+        """
+        Después de un reinicio: las horas hasta `hora` ya se procesaron (cursor persistente). Las
+        lecturas anteriores que lleguen sirven de historia: las variables de los modelos, la lluvia
+        de 30 días de la anticipación, la semana de caudal y presión de las fugas y la semana de la
+        deriva se rearman con ellas antes de seguir (sin esto quedarían incompletas hasta 30 días).
+        """
+        self.ultima_hora_procesada = pd.Timestamp(hora)
+        self._rearmar_historia = True
+
+    def _sembrar_historia(self):
+        """La lluvia horaria y las historias de las fugas y de la deriva de antes del cursor, con las
+        lecturas que ya están en el búfer (el servicio pide al reanudar las de los últimos 31 días)."""
+        self._rearmar_historia = False
+        con_anticipacion = getattr(self.modelos, "anticipacion", None) is not None
+        con_fugas = getattr(self.modelos, "fugas", None) is not None
+        con_deriva = getattr(self.modelos, "deriva", None) is not None
+        if not (con_anticipacion or con_fugas or con_deriva) or self.bufer.empty:
+            return
+        previas = carga.filtrar_sensores(self.bufer.loc[:self.ultima_hora_procesada + pd.Timedelta(minutes=45)],
+                                         self.sensores)
+        if previas.empty:
+            return
+        w15 = calidad.lecturas_operativas(previas)
+        if con_anticipacion and "lluvia_mm_h" in w15:
+            self.lluvia_horaria = anticipacion.horario(w15)["lluvia_mm_h"].dropna().sort_index()
+        if con_fugas:
+            hd = detector.horario(w15)
+            corte = self.ultima_hora_procesada - pd.Timedelta(hours=fugas_.HISTORIA_H + 24)
+            self.historia_fugas = hd.loc[hd.index > corte, _columnas_fugas(hd)]
+        if con_deriva:
+            ref = self.modelos.deriva["referencia"]
+            h = w15[[c for c in ref if c in w15]].resample("1h").mean()
+            corte = self.ultima_hora_procesada - pd.Timedelta(days=DIAS_DERIVA)
+            self.historia_deriva = h[(h.index > corte) & (h.index <= self.ultima_hora_procesada)]
+
     def horas_pendientes(self):
         """Horas completas que todavía no se procesaron (la hora en curso no cuenta)."""
         if self.ultima_lectura is None:
@@ -189,6 +252,8 @@ class Motor:
     def procesar(self):
         """Procesa todas las horas cerradas pendientes. Devuelve la lista de novedades."""
         self._pasar_al_bufer()
+        if self._rearmar_historia:
+            self._sembrar_historia()
         horas = self.horas_pendientes()
         if len(horas) == 0:
             return []
@@ -275,7 +340,7 @@ class Motor:
     # ------------------------------------------------------------------ fugas
     def _revisar_fugas(self, hd, horas, listas):
         f = self.modelos.fugas
-        cols = [c for c in hd.columns if c.startswith(("Q_", "P_")) or c in (f"TEMP_{fugas_.FUENTE}", "lluvia_mm_h")]
+        cols = _columnas_fugas(hd)
         # se guardan las horas nuevas; las que ya estaban no se reemplazan: se calcularon cuando eran
         # las últimas de su ventana, con toda su historia (al principio de una ventana la limpieza de
         # lecturas no ve las anteriores y puede dar otro promedio)

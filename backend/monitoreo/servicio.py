@@ -45,6 +45,7 @@ from starlette.concurrency import run_in_threadpool
 from calidad_agua import calidad, metas
 
 from monitoreo import __version__, prediccion, seguridad
+from monitoreo import cursor as cursor_
 from monitoreo import gestion as gestion_
 from monitoreo import rendimiento as rendimiento_
 from monitoreo import usuarios as usuarios_
@@ -52,10 +53,11 @@ from monitoreo.alertas import Alertas
 from monitoreo.cliente_datos import ClienteDatos
 from monitoreo.config import Config, RAIZ
 from monitoreo.modelos import Modelos, firma
-from monitoreo.motor import Motor
+from monitoreo.motor import DIAS_LLUVIA, Motor
 from monitoreo.trabajadores import Trabajadores
 
 REVISAR_MODELOS_S = 600         # cada cuánto se revisa si hay modelos nuevos en la carpeta
+SIN_DATOS_MIN = 60              # minutos sin lecturas nuevas antes de avisar (RNF-002; env SIN_DATOS_MIN)
 
 DIST = RAIZ / "frontend" / "dist"
 COOKIE = "sesion"
@@ -331,6 +333,17 @@ def silenciar_cortes(loop):
     loop.set_exception_handler(manejador)
 
 
+def _duracion(segundos):
+    """'45 min', '2 h 10 min', '3 días' (para los avisos de datos que no llegan)."""
+    minutos = int(round(segundos / 60))
+    if minutos < 60:
+        return f"{minutos} min"
+    if minutos < 48 * 60:
+        h, m = divmod(minutos, 60)
+        return f"{h} h" + (f" {m} min" if m else "")
+    return f"{minutos // (24 * 60)} días"
+
+
 class Servicio:
     """El motor más el ciclo en segundo plano que lo alimenta desde la API de datos."""
 
@@ -343,6 +356,10 @@ class Servicio:
         self.alertas = Alertas(destinatarios=cuentas.destinatarios if cuentas else None,
                                registro=cuentas.anotar_notificacion if cuentas else None, gestion=gestion,
                                rendimiento=rendimiento)
+        # cola de trabajo persistente (RNF-002): la API de datos guarda las lecturas y el cursor, la
+        # última hora procesada; al reiniciar se sigue desde ahí (cursor.py)
+        self.cursor = cursor_.Cursor(gestion.motor) if gestion is not None else None
+        self.retomado, self.error_cursor = None, None
         self.candado = threading.Lock()
         self.conectado = False
         self.ultimo_error = None
@@ -351,6 +368,9 @@ class Servicio:
         self.hilo = threading.Thread(target=self._ciclo, daemon=True)
         self.recargas, self.error_recarga, self._ultima_revision = [], None, time.time()
         self.trabajadores, self.error_trabajadores = None, None
+        # vigilancia de los datos: si dejan de llegar lecturas se avisa (vigilar_datos)
+        self.sin_datos_min = float(os.environ.get("SIN_DATOS_MIN") or SIN_DATOS_MIN)
+        self._ultima_vista, self._vista_t, self.sin_datos_desde = None, time.time(), None
 
     def revisar_modelos(self):
         """
@@ -384,17 +404,93 @@ class Servicio:
                 self._ultima_revision = t0
                 self.revisar_modelos()
             try:
-                lecturas = self.cliente.lecturas_desde(self.motor.ultima_lectura)
-                self.conectado, self.ultimo_error = True, None
-                with self.candado:
-                    for lec in lecturas:
-                        self.motor.recibir(lec["fecha"], lec["valores"])
-                    novedades = self.motor.procesar()
-                    self.alertas.revisar(self.motor, novedades)
+                self.paso()
                 self.ultimo_ciclo_s = round(time.time() - t0, 2)
             except Exception as e:                       # la API de datos se cayó o no responde
                 self.conectado, self.ultimo_error = False, str(e)[:200]
+            self.vigilar_datos()
             self._parar.wait(max(0.2, self.cfg.intervalo_consulta_s - (time.time() - t0)))
+
+    def paso(self):
+        """Un ciclo: trae las lecturas nuevas, procesa las horas cerradas, avisa y guarda el cursor."""
+        if self.motor.ultima_lectura is None:
+            lecturas = self._lecturas_al_arrancar()
+        else:
+            lecturas = self.cliente.lecturas_desde(self.motor.ultima_lectura)
+        self.conectado, self.ultimo_error = True, None
+        with self.candado:
+            for lec in lecturas:
+                self.motor.recibir(lec["fecha"], lec["valores"])
+            antes = self.motor.ultima_hora_procesada
+            novedades = self.motor.procesar()
+            self.alertas.revisar(self.motor, novedades)
+            hora = self.motor.ultima_hora_procesada
+            if self.cursor is not None and hora is not None and hora != antes:
+                self._guardar_cursor(hora)
+
+    def _guardar_cursor(self, hora):
+        """Sin base de datos el monitoreo sigue: el cursor se guarda en el siguiente ciclo que pueda."""
+        try:
+            self.cursor.guardar(hora)
+        except Exception as e:
+            if self.error_cursor is None:
+                print(f"No se pudo guardar el cursor ({type(e).__name__}); se reintenta en cada ciclo", flush=True)
+            self.error_cursor = str(e)[:200]
+        else:
+            self.error_cursor = None
+
+    def vigilar_datos(self, ahora=None):
+        """
+        Avisa a todos los destinatarios si pasan `sin_datos_min` minutos (reloj de la pared) sin
+        lecturas nuevas, porque mientras tanto no se puede detectar nada: la API de datos no responde,
+        o responde pero los sensores no mandan. Avisa una sola vez, y otra cuando vuelven los datos.
+        """
+        ahora = time.time() if ahora is None else ahora
+        ultima = self.motor.ultima_lectura
+        if ultima is not None and ultima != self._ultima_vista:
+            self._ultima_vista, self._vista_t = ultima, ahora
+            if self.sin_datos_desde is not None:
+                duracion = _duracion(ahora - self.sin_datos_desde)
+                self.sin_datos_desde = None
+                self.alertas.avisar(
+                    f"✅ <b>Vuelven a llegar datos de los sensores</b>\nEstuvieron sin llegar {duracion}. "
+                    "Las horas que quedaron pendientes se procesan en orden, sin saltarse ninguna.",
+                    "resumen", "ASADA La Lucha · Vuelven a llegar los datos de los sensores")
+            return
+        if self.sin_datos_desde is not None or ahora - self._vista_t < self.sin_datos_min * 60:
+            return
+        self.sin_datos_desde = self._vista_t
+        causa = (f"la API de datos no responde: {self.ultimo_error}" if not self.conectado
+                 else "la API de datos responde, pero no trae lecturas nuevas")
+        desde = f"la última es de {pd.Timestamp(ultima):%d/%m/%Y %H:%M}" if ultima is not None \
+            else "todavía no ha llegado ninguna"
+        duracion = _duracion(ahora - self._vista_t)
+        self.alertas.avisar(
+            f"⚠️ <b>No están llegando datos de los sensores</b>\nHace {duracion} que no llega ninguna lectura "
+            f"nueva ({desde}); {causa}.\nMientras tanto el sistema no puede detectar eventos. Cuando vuelvan, "
+            "las horas pendientes se procesan en orden, sin perder ninguna.",
+            "resumen", f"ASADA La Lucha · Sin datos de los sensores desde hace {duracion}")
+
+    def _lecturas_al_arrancar(self):
+        """
+        Con un cursor guardado, solo las lecturas que hacen falta para seguir después de él (la
+        historia que usan los modelos); el motor retoma en la hora siguiente. Si las lecturas de la
+        API de datos no llegan hasta el cursor (la fuente empezó de nuevo, como el simulador al
+        reiniciarlo), se procesa desde el principio.
+        """
+        hora = self.cursor.leer() if self.cursor is not None else None
+        if hora is not None:
+            # la historia que usan los modelos, y 31 días para la lluvia de 30 días de la anticipación
+            desde = hora - max(pd.Timedelta(hours=self.cfg.historia_h), pd.Timedelta(days=DIAS_LLUVIA)) \
+                + pd.Timedelta(minutes=15)
+            lecturas = self.cliente.lecturas_desde(desde)
+            if lecturas and pd.Timestamp(lecturas[-1]["fecha"]) >= hora:
+                self.motor.reanudar(hora)
+                self.retomado = {"despues_de": str(hora), "lecturas": len(lecturas)}
+                print(f"Se retoma el procesamiento después de {hora} (cursor guardado)", flush=True)
+                return lecturas
+            print(f"Las lecturas de la API de datos no llegan hasta {hora}: se procesa desde el principio", flush=True)
+        return self.cliente.lecturas_desde(None)
 
     def iniciar(self):
         if self.cfg.trabajadores_prediccion > 0:
@@ -513,6 +609,10 @@ def crear_app(cfg=None):
         problemas = []
         if not s.conectado:
             problemas.append("sin conexión con la API de datos" + (f": {s.ultimo_error}" if s.ultimo_error else ""))
+        if s.sin_datos_desde is not None:
+            problemas.append(f"sin lecturas nuevas desde hace {_duracion(time.time() - s.sin_datos_desde)}")
+        if s.error_cursor:
+            problemas.append(f"no se pudo guardar el cursor en la base de datos: {s.error_cursor}")
         if e["error_pronostico_lluvia"]:
             problemas.append(f"pronóstico de lluvia: {e['error_pronostico_lluvia']}")
         if s.error_recarga:
@@ -619,7 +719,9 @@ def crear_app(cfg=None):
             e = s.motor.estado()
             abierta = s.motor.lista_alarmas()[-1] if s.motor.alarma_abierta else None
             en_alarma = sum(1 for x in s.motor.resumen_sensores() if x["en_alarma"])
-        return {**e, "conectado_a_datos": s.conectado, "error": s.ultimo_error,
+        return {**e, "conectado_a_datos": s.conectado, "error": s.ultimo_error, "retomado": s.retomado,
+                "sin_datos_desde": (None if s.sin_datos_desde is None
+                                    else time.strftime("%Y-%m-%dT%H:%M:%S", time.localtime(s.sin_datos_desde))),
                 "duracion_ultimo_ciclo_s": s.ultimo_ciclo_s, "sensores_en_alarma": en_alarma,
                 "alarma_abierta": abierta, "sensores": len(s.motor.sensores), "alertas": s.alertas.estado()}
 

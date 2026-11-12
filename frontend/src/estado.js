@@ -97,7 +97,8 @@ export function alertasActivas({ estado, sensores, norma, anticipacion, fugas })
 export function resumenRed({ sinServicio, estado, sensores, alertas }) {
   if (sinServicio) return { nivel: "gris", texto: "Sin conexión con el servicio de monitoreo" };
   if (!estado) return { nivel: "gris", texto: "Conectando con el servicio…" };
-  if (!estado.conectado_a_datos) return { nivel: "gris", texto: "No están llegando datos de los sensores" };
+  if (!estado.conectado_a_datos || estado.sin_datos_desde)
+    return { nivel: "gris", texto: "No están llegando datos de los sensores" };
   if (!sensores.length) return { nivel: "gris", texto: "Esperando las primeras lecturas" };
   const reales = alertas.filter((a) => a.nivel !== "habitual");
   const habituales = alertas.filter((a) => a.nivel === "habitual");

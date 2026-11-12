@@ -28,6 +28,8 @@ backend/
     pronostico_lluvia.py  pronóstico de lluvia que necesitan los modelos (archivo u Open-Meteo)
     motor.py           recibe lecturas, procesa cada hora cerrada, maneja las alarmas
     cliente_datos.py   consulta la API de datos
+    reintentos.py      reintentos con espera creciente para la API de datos y Open-Meteo (RNF-002)
+    cursor.py          última hora procesada, en la base de datos: al reiniciar se sigue desde ahí
     alertas.py         avisos por correo y Telegram (alarmas, avisos anticipados, riesgo en 24 h, resumen diario)
     correo.py          envío de los avisos por correo (SMTP) a los destinatarios de cada nivel
     servicio.py        API del servicio (FastAPI, puerto 8001) que además sirve el dashboard
@@ -467,7 +469,7 @@ base. Se ajusta con `RENDIMIENTO_DIAS` (7), `RENDIMIENTO_F1_MINIMO` (0,75) y
 | `GET, POST /api/rendimiento/no-detectados` | eventos que ocurrieron sin alerta; registrar uno (operador o administrador): `{"fecha", "tipo", "lugar", "fuente", "observaciones"}` |
 | `GET /api/notificaciones?limite=30` | solo administrador: si el correo está configurado, cuántas personas reciben cada nivel y los últimos envíos por correo y Telegram |
 | `POST /api/notificaciones/prueba` | solo administrador: manda un correo de prueba a quien lo pide (409 si no hay SMTP; 502 con el motivo si el servidor no lo acepta) |
-| `GET /api/estado` | hora de los datos, conexión, alarma activa, modo de pronóstico, estado de las alertas. Desde aquí, todo `/api/...` pide la sesión (401 sin ella) |
+| `GET /api/estado` | hora de los datos, conexión, alarma activa, modo de pronóstico, estado de las alertas; `retomado` (desde qué hora siguió después de un reinicio) y `sin_datos_desde` (desde cuándo no llegan lecturas). Desde aquí, todo `/api/...` pide la sesión (401 sin ella) |
 | `POST /predict/fugas` | requiere `X-API-Key`. Con las mismas lecturas, pero de los últimos 8 días: probabilidad de fuga, alarma confirmada, tramo más probable y caudal de más (nivel verde, amarillo o rojo). 422 si falta historia |
 | `GET /api/sensores` | estado actual de los sensores: observado, pronóstico a 24 h, probabilidad de evento |
 | `GET /api/sensores/{nodo}/serie?horas=72` | serie horaria para graficar (observado, pronóstico, probabilidad) |
@@ -476,6 +478,24 @@ base. Se ajusta con `RENDIMIENTO_DIAS` (7), `RENDIMIENTO_F1_MINIMO` (0,75) y
 | `GET /api/anticipacion` | probabilidad de que empiece cada tipo de evento en las próximas 24 h, con su umbral, y los avisos anticipados (`disponible: false` si no hay modelo de anticipación) |
 | `GET /api/fugas?horas=168` | probabilidad de fuga por hora, estado actual con el tramo y el caudal de más, y las alarmas de fuga (`disponible: false` si no hay modelo de fugas) |
 | `GET /api/referencias` | norma, tolerancias de la meta y umbral del detector |
+
+### Resiliencia (RNF-002)
+
+Ninguna falla externa detiene el monitoreo ni hace perder horas de datos. El detalle, con cada
+modo de falla y sus pruebas, está en [docs/arquitectura-resiliencia.md](docs/arquitectura-resiliencia.md).
+
+- **Reintentos con espera creciente:** la API de datos (0,5, 1 y 2 s), Open-Meteo (1, 2 y 4 s; si
+  falla, sigue con el último pronóstico y vuelve a probar en 10 min) y el correo y Telegram (5, 10
+  y 20 s, cada canal en su hilo).
+- **Cola persistente:** la API de datos guarda las lecturas y el servicio guarda en la base de
+  datos la última hora procesada (`cursor.py`). Si la API se cae, al volver se procesan en orden
+  todas las horas pendientes; si el servicio se reinicia, sigue con la hora siguiente y rearma con
+  los últimos 31 días la lluvia de 30 días, la semana de las fugas y la de la deriva.
+- **Base de datos caída:** los resultados se escriben siempre en el CSV de `registros/` y las filas
+  para la base esperan hasta que vuelva.
+- **Datos que no llegan:** si pasan 60 min sin lecturas nuevas (`SIN_DATOS_MIN`), se avisa por correo
+  (a todos los destinatarios) y por Telegram, y otra vez cuando vuelven. `/health` da `degradado`.
+- **Docker** vuelve a levantar los servicios si se caen (`restart: unless-stopped`).
 
 ## Cómo funciona el motor
 
@@ -490,7 +510,8 @@ base. Se ajusta con `RENDIMIENTO_DIAS` (7), `RENDIMIENTO_F1_MINIMO` (0,75) y
   (`calidad.lecturas_operativas`). `/api/estado` dice en `imputacion_ultimo_ciclo` cuántas filas
   del último ciclo llegaron completas, con algo rellenado o con un hueco largo.
 - **Calentamiento:** al arrancar, hasta tener 96 h de datos no se encienden alarmas y los
-  pronósticos se marcan como `calentando`.
+  pronósticos se marcan como `calentando`. Después de un reinicio no hay calentamiento: el
+  servicio sigue desde la última hora procesada (ver Resiliencia).
 - **Alarmas** (igual que en el notebook 07): un sensor entra en alarma si su probabilidad
   de evento supera el umbral 3 horas seguidas; la alarma de red se cierra tras 2 horas
   seguidas sin ningún sensor en alarma.

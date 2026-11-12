@@ -11,7 +11,9 @@ que se entrenaron (ECMWF IFS, GFS, ICON y GEM). Hay dos fuentes:
               de fechas pasadas, como los que manda el emisor: el servicio ve exactamente el
               pronóstico que habría existido en ese momento.
   open-meteo  el pronóstico vigente de la Forecast API de Open-Meteo, para operar con datos en
-              tiempo real. Se consulta al arrancar y luego cada hora.
+              tiempo real. Se consulta al arrancar y luego cada hora, con 3 reintentos y espera
+              exponencial (reintentos.py, RNF-002); si igual falla, se sigue con el último
+              pronóstico y se vuelve a probar en 10 minutos.
 
 Se elige con la variable de entorno FUENTE_PRONOSTICO.
 """
@@ -25,6 +27,7 @@ import urllib.request
 import pandas as pd
 
 from calidad_agua import clima
+from monitoreo.reintentos import reintentar
 
 LATITUD, LONGITUD = 10.3606, -84.5135            # estación 69-701 ITCR, San Carlos (IMN)
 URL_OPEN_METEO = ("https://api.open-meteo.com/v1/forecast?latitude={lat}&longitude={lon}"
@@ -44,9 +47,10 @@ class PronosticoArchivo:
 
 class PronosticoOpenMeteo:
     descripcion = "pronóstico vigente de Open-Meteo"
+    REINTENTAR_S = 600                                 # si la consulta falló del todo, otra en 10 min
 
-    def __init__(self, modelos=clima.MODELOS, cada_s=3600):
-        self.modelos, self.cada_s = list(modelos), cada_s
+    def __init__(self, modelos=clima.MODELOS, cada_s=3600, dormir=time.sleep):
+        self.modelos, self.cada_s, self.dormir = list(modelos), cada_s, dormir
         self.serie, self.consultado = None, 0.0
         self.error = None
         self._candado = threading.Lock()              # el motor y las solicitudes a pedido lo comparten
@@ -55,9 +59,12 @@ class PronosticoOpenMeteo:
         if self.serie is not None and time.time() - self.consultado < self.cada_s:
             return
         url = URL_OPEN_METEO.format(lat=LATITUD, lon=LONGITUD, modelos=",".join(self.modelos))
+
+        def consultar():
+            with urllib.request.urlopen(url, timeout=10) as r:
+                return json.load(r)["hourly"]
         try:
-            with urllib.request.urlopen(url, timeout=20) as r:
-                datos = json.load(r)["hourly"]
+            datos = reintentar(consultar, nombre="la consulta a Open-Meteo", dormir=self.dormir)
             t = pd.DataFrame({m: datos.get(f"precipitation_{m}") for m in self.modelos},
                              index=pd.to_datetime(datos["time"])).astype(float)
             nueva = t.clip(lower=0).mean(axis=1).astype("float32")
@@ -66,6 +73,7 @@ class PronosticoOpenMeteo:
             self.consultado, self.error = time.time(), None
         except Exception as e:                          # sin red: se sigue con el último pronóstico
             self.error = str(e)
+            self.consultado = time.time() - self.cada_s + self.REINTENTAR_S
             if self.serie is None:
                 self.serie = pd.Series(dtype="float32")
 
