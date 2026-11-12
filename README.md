@@ -26,6 +26,7 @@ backend/
     config.py          configuración (URL de la API de datos, modelos, modo de pronóstico)
     modelos.py         carga los modelos entrenados y los aplica
     pronostico_lluvia.py  pronóstico de lluvia que necesitan los modelos (archivo u Open-Meteo)
+    fuentes_lluvia.py  de dónde sale la lluvia observada: adaptadores (lecturas u Open-Meteo, RNF-009)
     motor.py           recibe lecturas, procesa cada hora cerrada, maneja las alarmas
     cliente_datos.py   consulta la API de datos
     reintentos.py      reintentos con espera creciente para la API de datos y Open-Meteo (RNF-002)
@@ -146,6 +147,26 @@ con la variable de entorno `FUENTE_PRONOSTICO`:
   del emisor, que son de fechas pasadas: el servicio ve el pronóstico que existía en ese momento.
 - `open-meteo`: el pronóstico vigente de la API de Open-Meteo, para datos en tiempo real. Se
   consulta cada hora; si no hay conexión, se sigue con el último que se obtuvo.
+
+**Lluvia observada (RNF-009).** Los tres modelos usan también la lluvia que ya cayó
+(`lluvia_mm_h`: el detector la de las últimas horas, las fugas la de 24 h y la anticipación la de
+30 días). Los sensores de la red no la miden; en el dataset viene de la estación 69-701 del IMN, que
+el simulador mete en las lecturas. La fuente se elige con `FUENTE_LLUVIA`, y cada fuente es un
+adaptador de la capa de ingesta (`backend/monitoreo/fuentes_lluvia.py`) que completa la lluvia de
+cada lectura antes de que llegue al motor:
+
+- `lecturas` (por defecto): la lluvia viene en las lecturas, como la manda el simulador o la
+  mandaría un pluviómetro de la ASADA.
+- `open-meteo`: se consulta Open-Meteo para la hora de cada lectura, con el modelo meteorológico de
+  `LLUVIA_MODELOS` (por defecto `ecmwf_ifs025`, el que mejor coincide con la estación). Usa la
+  Forecast API para los últimos 90 días y la Historical Forecast API para fechas más viejas (las
+  del simulador), con los reintentos de RNF-002; si Open-Meteo no responde, esas horas quedan sin
+  lluvia y `/health` da `degradado`.
+
+Otra fuente (otra API, una estación propia) se agrega con una clase nueva en ese archivo, sin
+tocar el servicio, el motor ni los modelos. Antes de pasar a `open-meteo` hay que reentrenar los
+modelos con esa misma lluvia: la comparación con el IMN y lo que pasa con cada modelo están en
+`Modelo_calidad_agua/docs/modelos/fuente-lluvia.md`.
 
 ## Pruebas
 

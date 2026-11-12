@@ -46,6 +46,7 @@ from calidad_agua import calidad, metas
 
 from monitoreo import __version__, prediccion, seguridad
 from monitoreo import cursor as cursor_
+from monitoreo import fuentes_lluvia
 from monitoreo import gestion as gestion_
 from monitoreo import rendimiento as rendimiento_
 from monitoreo import usuarios as usuarios_
@@ -350,7 +351,9 @@ class Servicio:
     def __init__(self, cfg, cuentas=None, gestion=None, rendimiento=None):
         self.cfg = cfg
         self.motor = Motor(cfg)
-        self.cliente = ClienteDatos(cfg.url_datos)
+        # la lluvia observada, de la fuente elegida con FUENTE_LLUVIA (RNF-009, fuentes_lluvia.py)
+        self.fuente_lluvia = fuentes_lluvia.desde_entorno()
+        self.cliente = fuentes_lluvia.ConLluvia(ClienteDatos(cfg.url_datos), self.fuente_lluvia)
         # correo (SMTP) y Telegram si están configurados; si no, consola. Los destinatarios del correo
         # son los usuarios marcados en la página Usuarios, y cada envío queda en la tabla notificaciones
         self.alertas = Alertas(destinatarios=cuentas.destinatarios if cuentas else None,
@@ -596,7 +599,7 @@ def crear_app(cfg=None):
     def salud():
         """
         200 con estado "ok" si todo funciona, o "degradado" si el servicio está en pie pero no
-        llegan datos o falla el pronóstico de lluvia (sigue con el último). Mientras carga los
+        llegan datos o falla el pronóstico o la fuente de la lluvia. Mientras carga los
         modelos el puerto todavía no responde. Para Docker y para monitoreo externo.
         """
         if "s" not in estado:
@@ -615,6 +618,8 @@ def crear_app(cfg=None):
             problemas.append(f"no se pudo guardar el cursor en la base de datos: {s.error_cursor}")
         if e["error_pronostico_lluvia"]:
             problemas.append(f"pronóstico de lluvia: {e['error_pronostico_lluvia']}")
+        if s.fuente_lluvia.error:
+            problemas.append(f"lluvia observada ({s.fuente_lluvia.nombre}): {s.fuente_lluvia.error}")
         if s.error_recarga:
             problemas.append(f"modelos nuevos sin cargar: {s.error_recarga}")
         if s.error_trabajadores:
@@ -624,6 +629,7 @@ def crear_app(cfg=None):
                 "modelos": {**m.version, "modo": m.modo,
                             "por_parametro": m.elegido, "umbral_detector": m.umbral},
                 "pronostico_lluvia": e["pronostico_lluvia"],
+                "lluvia_observada": s.fuente_lluvia.estado(),
                 "conectado_a_datos": s.conectado,
                 "ultima_hora_procesada": e["ultima_hora_procesada"],
                 "alertas": s.alertas.nombre,

@@ -7,6 +7,10 @@ Configuración del servicio. Cada valor se puede cambiar con una variable de ent
   CARPETA_REGISTROS  CSV de cada sesión                     (por defecto registros/ de este proyecto)
   FUENTE_PRONOSTICO  pronóstico de lluvia: "archivo" (pronósticos pasados, para los datos del
                      emisor) u "open-meteo" (pronóstico vigente, para datos en tiempo real)
+  FUENTE_LLUVIA      lluvia observada: "lecturas" (viene en las lecturas, como la manda el simulador)
+                     u "open-meteo" (se consulta para cada hora; los sensores reales no miden lluvia).
+                     Ver monitoreo/fuentes_lluvia.py (RNF-009)
+  LLUVIA_MODELOS     modelos meteorológicos de Open-Meteo para esa lluvia (separados por comas)
   CERTIFICADO_TLS,   certificado y clave (PEM) para atender por HTTPS; rutas absolutas o
   CLAVE_TLS          relativas a la raíz del proyecto (ver monitoreo/seguridad.py)
   BASE_DE_DATOS      URL de SQLAlchemy donde guardar también los resultados de cada hora (p. ej.
