@@ -4,7 +4,9 @@ import { fechaHora, TIPOS } from "../formato.js";
 
 // Gestión de alertas (CU-06): lista filtrable por estado, tipo, nodo y fecha; el detalle con lo que
 // hay que saber para actuar; reconocerla, anotar lo que se hizo en campo y cerrarla con su resultado.
-// Todos los roles la ven; solo el operador técnico y el administrador la atienden.
+// Arriba, el F1 de las alarmas de los últimos 7 días con lo verificado en campo (RF-004.2, RNF-003) y
+// el registro de los eventos que ocurrieron sin alerta. Todos los roles la ven; solo el operador técnico
+// y el administrador la atienden.
 
 const ESTADOS = { nueva: "Nueva", en_atencion: "En atención", cerrada: "Cerrada" };
 const CLASE_ESTADO = { nueva: "nivel-rojo", en_atencion: "nivel-amarillo", cerrada: "nivel-verde" };
@@ -20,6 +22,101 @@ const RESULTADOS = [
 ];
 const EVENTO = { ...TIPOS, CL2: "Cloro", TURB: "Turbidez", PH: "pH", anomalia: "Operación fuera de lo normal" };
 const pct = (p) => (p == null ? "—" : `${Math.round(100 * p)} %`);
+const ESTADO_F1 = {
+  bien: { texto: "En la meta", clase: "nivel-verde" },
+  bajo: { texto: "Debajo de la meta", clase: "nivel-rojo" },
+  sin_datos: { texto: "Faltan casos verificados", clase: "" },
+};
+const FUENTES = { laboratorio: "Resultado de laboratorio", registro_asada: "Registro de la ASADA",
+                  reporte: "Reporte de un abonado", otra: "Otra" };
+const VACIO = { fecha: "", tipo: "", lugar: "", fuente: "", observaciones: "" };
+const cuantos = (n, uno, varios) => `${n} ${n === 1 ? uno : varios}`;
+
+function Rendimiento({ puede }) {
+  const r = useConsulta("/api/rendimiento", 30000);
+  const [abierto, setAbierto] = useState(false);
+  const [f, setF] = useState(VACIO);
+  const [msj, setMsj] = useState(null);
+  const [ocupado, setOcupado] = useState(false);
+  if (!r.datos) return null;
+  const a = r.datos.actual;
+  const est = ESTADO_F1[a.estado] ?? ESTADO_F1.sin_datos;
+  const cambiar = (k) => (e) => setF({ ...f, [k]: e.target.value });
+  const enviar = async (e) => {
+    e.preventDefault();
+    setOcupado(true);
+    setMsj(null);
+    try {
+      await pedir("/api/rendimiento/no-detectados", { metodo: "POST", cuerpo: { ...f, lugar: f.lugar || null } });
+      setMsj({ ok: "Registrado. Cuenta como evento no detectado en el F1." });
+      setF(VACIO);
+      r.recargar();
+    } catch (err) {
+      setMsj({ error: err.message });
+    } finally {
+      setOcupado(false);
+    }
+  };
+  const listo = f.fecha && f.tipo && f.fuente && f.observaciones.trim().length >= 5;
+
+  return (
+    <div className={`rendimiento estado-${a.estado}`} role="group" aria-label="F1 de las alarmas">
+      <div className="rend-cabeza">
+        <span><b>F1 de las alarmas</b> · últimos {r.datos.ventana_dias} días</span>
+        <span className={`pastilla ${est.clase}`}>{est.texto}</span>
+      </div>
+      <div className="rend-valores">
+        <div><b>{pct(a.f1)}</b><span>F1 (meta ≥ {pct(r.datos.f1_minimo)})</span></div>
+        <div><b>{pct(a.precision)}</b><span>Alarmas que eran eventos</span></div>
+        <div><b>{pct(a.sensibilidad)}</b><span>Eventos con alarma</span></div>
+      </div>
+      <p className="nota">
+        {cuantos(a.confirmadas, "confirmada", "confirmadas")} · {cuantos(a.descartadas, "falso positivo", "falsos positivos")}
+        {" · "}{cuantos(a.no_detectados, "no detectado", "no detectados")}
+        {a.sin_verificar ? ` · ${a.sin_verificar} sin verificar` : ""}
+        {a.estado === "sin_datos" && ` · se necesitan al menos ${r.datos.minimo_casos} casos verificados`}
+      </p>
+      {puede && !abierto && (
+        <button className="boton-texto" onClick={() => { setAbierto(true); setMsj(null); }}>
+          Registrar un evento que no se detectó
+        </button>
+      )}
+      {msj?.ok && <p className="mensaje ok" role="status">{msj.ok}</p>}
+      {abierto && (
+        <form className="formulario no-detectado" onSubmit={enviar}>
+          <p className="nota">Un evento que ocurrió sin que el sistema avisara (lo dijo el laboratorio, un registro de
+            la ASADA o un abonado). Cuenta en contra del F1: así se mide lo que el sistema deja pasar.</p>
+          <div className="dos-columnas">
+            <label className="campo"><span>Cuándo ocurrió</span>
+              <input type="datetime-local" value={f.fecha} onChange={cambiar("fecha")} required /></label>
+            <label className="campo"><span>Tipo de evento</span>
+              <select value={f.tipo} onChange={cambiar("tipo")} required>
+                <option value="">Elegir…</option>
+                {Object.entries(TIPOS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+              </select></label>
+            <label className="campo"><span>Dónde</span>
+              <input value={f.lugar} onChange={cambiar("lugar")} placeholder="Ej.: J224, calle de la escuela" /></label>
+            <label className="campo"><span>Cómo se supo</span>
+              <select value={f.fuente} onChange={cambiar("fuente")} required>
+                <option value="">Elegir…</option>
+                {Object.entries(FUENTES).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+              </select></label>
+          </div>
+          <label className="campo"><span>Observaciones (obligatorias)</span>
+            <textarea rows={2} value={f.observaciones} onChange={cambiar("observaciones")} required
+                      placeholder="Ej.: muestra semanal del Ministerio con cloro residual de 0,1 mg/L." /></label>
+          {msj?.error && <p className="mensaje error" role="alert">{msj.error}</p>}
+          <div className="acciones">
+            <button className="boton primario chico" disabled={ocupado || !listo}>Registrar</button>
+            <button type="button" className="boton chico" onClick={() => { setAbierto(false); setF(VACIO); setMsj(null); }}>
+              Cancelar
+            </button>
+          </div>
+        </form>
+      )}
+    </div>
+  );
+}
 
 function Indicadores({ datos }) {
   if (!datos) return null;
@@ -198,6 +295,7 @@ export default function GestionAlertas({ id, sesion, nodos, indicadores }) {
           </div>
         </div>
         <Indicadores datos={indicadores.datos} />
+        <Rendimiento puede={sesion.permisos.atender_alertas} />
         <div className="filtros filtros-alertas">
           <label className="campo"><span>Estado</span>
             <select value={f.estado} onChange={cambiar("estado")}>

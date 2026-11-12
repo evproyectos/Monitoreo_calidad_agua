@@ -37,6 +37,7 @@ backend/
     seguridad.py       clave de API, registro de accesos rechazados y HTTPS (TLS 1.2 o más)
     usuarios.py        inicio de sesión, roles, usuarios y bitácora del dashboard (CU-00, CU-07)
     gestion.py         gestión de las alertas: reconocer, atender y cerrar con su resultado (CU-06)
+    rendimiento.py     F1 de las alarmas en producción, cada día en MLflow, y eventos no detectados (RNF-003)
     trabajadores.py    /predict en procesos aparte, para atender a varios usuarios a la vez
     base_datos.py      resultados de cada hora también en una base de datos (PostgreSQL/TimescaleDB)
     probar_prediccion.py  prueba de ese endpoint: latencia p95, errores 422 y mismos números
@@ -426,6 +427,30 @@ faltan por atender, y el botón de cada correo lleva directo a su alerta.
   verificadas en campo resultó un evento real: es el insumo para validar el modelo (RF-004.1).
 - La Junta Directiva las ve, pero solo el operador técnico y el administrador las atienden.
 
+### F1 de las alarmas en producción (RF-004.2 y RNF-003)
+
+La página **Alertas** muestra el **F1 de los últimos 7 días** de las alarmas de la red y las
+posibles fugas (las alertas rojas de los modelos de detección), con lo que el personal verificó:
+
+- **acierto:** alerta cerrada como confirmada; **falso positivo:** cerrada como falso positivo;
+- **no detectado:** un evento que ocurrió sin alerta. Lo registra el operador o el administrador con
+  el botón **Registrar un evento que no se detectó** (cuándo, tipo, dónde, si lo dijo el laboratorio,
+  un registro de la ASADA o un abonado, y observaciones);
+- las inconclusas, las que siguen abiertas y los avisos amarillos no cuentan.
+
+F1 = 2·aciertos / (2·aciertos + falsos positivos + no detectados). Con menos de 3 casos verificados
+en la ventana se muestra "faltan casos verificados" y no se avisa.
+
+**Todos los días**, cuando el procesamiento pasa por la medianoche de los datos, el servicio
+calcula el F1 de los 7 días anteriores, lo guarda en la base (tabla `rendimiento_diario`) y lo
+registra en **MLflow**, en el experimento `monitoreo_produccion` (una corrida por día con el F1,
+la precisión, la sensibilidad y los casos). Si el F1 baja de **75 %**, manda una **alerta
+amarilla** por correo y Telegram con qué revisar. En Docker, MLflow ya está conectado
+(`MLFLOW_URL=http://mlflow:5000`); sin Docker se configura con `MLFLOW_URL` en el `.env` (por
+ejemplo `http://127.0.0.1:5000` con `mlflow ui` corriendo); sin MLflow el F1 se guarda igual en la
+base. Se ajusta con `RENDIMIENTO_DIAS` (7), `RENDIMIENTO_F1_MINIMO` (0,75) y
+`RENDIMIENTO_MIN_CASOS` (3).
+
 ### API del servicio (puerto 8001)
 
 | Ruta | Qué devuelve |
@@ -438,6 +463,8 @@ faltan por atender, y el botón de cada correo lleva directo a su alerta.
 | `GET /api/bitacora?limite=100` | solo administrador: accesos y cambios, el más reciente primero |
 | `GET /api/alertas?estado=pendientes&tipo=&nodo=&desde=&hasta=` | alertas para atender (estado `nueva`, `en_atencion`, `cerrada` o `pendientes`; tipo `alarma`, `fuga`, `aviso` o `riesgo`; fechas AAAA-MM-DD), lo pendiente primero. `GET /api/alertas/{id}` da el detalle con el historial y `GET /api/alertas/indicadores`, lo pendiente y los resultados de los últimos 30 días |
 | `POST /api/alertas/{id}/reconocer`, `/notas` y `/cerrar` | operador o administrador: tomar la alerta, agregar `{"texto"}` y cerrarla con `{"resultado", "observaciones"}` (409 si ya está cerrada o la atiende otra persona) |
+| `GET /api/rendimiento` | F1 de las alarmas en los últimos 7 días (hora de los datos), con los aciertos, falsos positivos, no detectados y sin verificar, y el historial diario |
+| `GET, POST /api/rendimiento/no-detectados` | eventos que ocurrieron sin alerta; registrar uno (operador o administrador): `{"fecha", "tipo", "lugar", "fuente", "observaciones"}` |
 | `GET /api/notificaciones?limite=30` | solo administrador: si el correo está configurado, cuántas personas reciben cada nivel y los últimos envíos por correo y Telegram |
 | `POST /api/notificaciones/prueba` | solo administrador: manda un correo de prueba a quien lo pide (409 si no hay SMTP; 502 con el motivo si el servidor no lo acepta) |
 | `GET /api/estado` | hora de los datos, conexión, alarma activa, modo de pronóstico, estado de las alertas. Desde aquí, todo `/api/...` pide la sesión (401 sin ella) |

@@ -11,10 +11,12 @@ Qué se avisa:
   - aviso anticipado: el modelo de anticipación (notebook 09) espera que empiece un evento en las
     próximas 24 h; dice el tipo, la probabilidad, por qué (las señales de ese tipo) y, si el evento
     empieza en la planta, en cuántas horas llegaría a cada sensor, y qué revisar para evitarlo;
-  - resumen diario, a la hora ALERTAS_RESUMEN_HORA de los datos.
+  - resumen diario, a la hora ALERTAS_RESUMEN_HORA de los datos;
+  - rendimiento bajo: el F1 de las alarmas de los últimos 7 días, con lo verificado en campo, bajó del
+    75 % (rendimiento.py, RF-004.2 y RNF-003). Se revisa a la medianoche de los datos.
 
-Cada aviso tiene un nivel: rojo (alarmas y fugas), amarillo (aviso anticipado, riesgo en 24 h y
-deriva) o resumen. Por correo lo reciben los usuarios que el administrador marcó para ese nivel en la
+Cada aviso tiene un nivel: rojo (alarmas y fugas), amarillo (aviso anticipado, riesgo en 24 h,
+deriva y rendimiento bajo) o resumen. Por correo lo reciben los usuarios que el administrador marcó para ese nivel en la
 página Usuarios (ver correo.py); el asunto dice el nivel, qué pasa y en qué sensor o tramo (CU-04).
 Por Telegram lo reciben los chats de TELEGRAM_CHAT_ID, sin importar el nivel.
 
@@ -113,6 +115,10 @@ def _fecha(t):
 
 def _num(x, dec=2):
     return "—" if x is None or x != x else f"{x:.{dec}f}".replace(".", ",")
+
+
+def _cuantos(n, uno, varios):
+    return f"{n} {uno if n == 1 else varios}"
 
 
 def _pct(x):
@@ -301,10 +307,12 @@ class _Envio:
 
 # ---------------------------------------------------------------------------- alertas
 class Alertas:
-    def __init__(self, canal=None, canales=None, destinatarios=None, registro=None, gestion=None):
+    def __init__(self, canal=None, canales=None, destinatarios=None, registro=None, gestion=None,
+                 rendimiento=None):
         """`destinatarios(nivel)` da los correos de un nivel (Usuarios.destinatarios), `registro(...)`
-        anota cada envío (Usuarios.anotar_notificacion) y `gestion` (GestionAlertas) guarda cada alerta
-        para atenderla (CU-06): una alerta que ya existía no se vuelve a notificar."""
+        anota cada envío (Usuarios.anotar_notificacion), `gestion` (GestionAlertas) guarda cada alerta
+        para atenderla (CU-06): una alerta que ya existía no se vuelve a notificar, y `rendimiento`
+        (Rendimiento) calcula y registra el F1 de cada día."""
         self.con_riesgo = os.environ.get("ALERTAS_RIESGO", "1") != "0"
         self.con_anticipacion = os.environ.get("ALERTAS_ANTICIPACION", "1") != "0"
         self.hora_resumen = int(os.environ.get("ALERTAS_RESUMEN_HORA", "7"))
@@ -312,6 +320,7 @@ class Alertas:
         self.canales = canales or ([canal] if canal else canales_desde_entorno(destinatarios, self.url))
         self.riesgo = {}                    # (sensor, parámetro) -> horas seguidas en norma (episodio abierto)
         self.gestion = gestion
+        self.rendimiento = rendimiento
         self._envios = [_Envio(c, registro) for c in self.canales]
 
     @property
@@ -421,6 +430,14 @@ class Alertas:
             horas = pd.date_range(anterior, ahora, freq="1h")[1:] if anterior is not None else []
             if any(h.hour == self.hora_resumen for h in horas):
                 self.avisar(*self._texto_resumen(motor, sensores, ahora))
+        if self.rendimiento is not None:
+            try:
+                r = self.rendimiento.diario(anterior, ahora)
+            except Exception as e:                           # sin base de datos el monitoreo sigue
+                print(f"No se pudo calcular el F1 del día: {e}", flush=True)
+            else:
+                if r is not None and r["estado"] == "bajo":
+                    self.avisar(*self._texto_rendimiento(r))
 
     @staticmethod
     def _tipo_alarma(motor, n):
@@ -520,6 +537,18 @@ class Alertas:
                 "<b>Qué hacer:</b> revisar y calibrar esos sensores; si las lecturas están bien, la operación "
                 "cambió y conviene volver a entrenar los modelos (Modelo_calidad_agua/herramientas/reentrenar.py)."), \
             "amarillo", asunto
+
+    def _texto_rendimiento(self, r):
+        meta = self.rendimiento.f1_minimo
+        return (f"🟠 <b>Las alarmas están acertando menos</b> · F1 de {_pct(r['f1'])} en los últimos "
+                f"{self.rendimiento.dias} días (meta ≥ {_pct(meta)})\n"
+                f"Verificado en campo: {_cuantos(r['confirmadas'], 'confirmada', 'confirmadas')}, "
+                f"{_cuantos(r['descartadas'], 'falso positivo', 'falsos positivos')} y "
+                f"{_cuantos(r['no_detectados'], 'evento que no se detectó', 'eventos que no se detectaron')}.\n"
+                "<b>Qué hacer:</b> revisar los sensores (calibración, fallas) y si la operación cambió; si sigue "
+                "bajo, volver a entrenar los modelos con los datos nuevos "
+                "(Modelo_calidad_agua/herramientas/reentrenar.py)."), \
+            "amarillo", f"Alerta amarilla · F1 de las alarmas en {_pct(r['f1'])} (meta ≥ {_pct(meta)})"
 
     def _texto_cerrada(self, motor, n):
         a = next((x for x in motor.alarmas if x["id"] == n["id"]), None)

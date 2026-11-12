@@ -17,6 +17,8 @@ del motor.
   GET /api/anticipacion                 probabilidad de que empiece cada tipo de evento en 24 h y avisos
   GET /api/fugas?horas=168              probabilidad de fuga por hora, tramo y alarmas de fuga
   GET /api/deriva                       deriva de los datos: la última semana contra el entrenamiento
+  GET /api/rendimiento                  F1 de las alarmas en los últimos 7 días e historial diario (RNF-003)
+  GET/POST /api/rendimiento/no-detectados  eventos que ocurrieron sin alerta (falsos negativos)
   GET /api/referencias                  norma, tolerancias de la meta y umbral del detector
   GET /                                 dashboard (React, compilado en frontend/dist)
 
@@ -31,6 +33,7 @@ import threading
 import time
 from contextlib import asynccontextmanager
 
+import pandas as pd
 from fastapi import Depends, FastAPI, HTTPException, Request, Response
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
@@ -43,6 +46,7 @@ from calidad_agua import calidad, metas
 
 from monitoreo import __version__, prediccion, seguridad
 from monitoreo import gestion as gestion_
+from monitoreo import rendimiento as rendimiento_
 from monitoreo import usuarios as usuarios_
 from monitoreo.alertas import Alertas
 from monitoreo.cliente_datos import ClienteDatos
@@ -91,6 +95,14 @@ class Nota(BaseModel):
 
 class Cierre(BaseModel):
     resultado: str
+    observaciones: str
+
+
+class NoDetectado(BaseModel):
+    fecha: str
+    tipo: str
+    lugar: str | None = None
+    fuente: str
     observaciones: str
 
 
@@ -153,7 +165,8 @@ def _instalar_sesiones(app, cfg, cuentas):
             if ruta.startswith(("/api/usuarios", "/api/bitacora", "/api/notificaciones")) \
                     and u["rol"] != "administrador":
                 return error(403, "Esta sección es solo para el administrador.")
-            if ruta.startswith("/api/alertas/") and request.method == "POST" and not _permisos(u)["atender_alertas"]:
+            if ruta.startswith(("/api/alertas/", "/api/rendimiento/")) and request.method == "POST" \
+                    and not _permisos(u)["atender_alertas"]:
                 return error(403, "Solo el operador técnico y el administrador atienden las alertas.")
             request.state.usuario = u
         return await call_next(request)
@@ -274,6 +287,30 @@ def _instalar_gestion(app, gestion):
         return hacer(gestion.cerrar, uid, quien(request), datos.resultado, datos.observaciones)
 
 
+def _instalar_rendimiento(app, rendimiento, hora_datos):
+    """F1 de las alarmas en producción (RF-004.2, RNF-003) y los eventos que ocurrieron sin alerta."""
+    def hacer(f, *args):
+        try:
+            return f(*args)
+        except gestion_.ErrorGestion as e:
+            raise HTTPException(e.codigo, {"error": e.mensaje})
+
+    @app.get("/api/rendimiento")
+    def ver_rendimiento():
+        """F1 de los últimos días (hora de los datos), cómo se calcula y el historial diario."""
+        return rendimiento.resumen(hora_datos())
+
+    @app.get("/api/rendimiento/no-detectados")
+    def ver_no_detectados(limite: int = 50):
+        return rendimiento.lista_no_detectados(max(1, min(limite, 500)))
+
+    @app.post("/api/rendimiento/no-detectados", status_code=201)
+    def registrar_no_detectado(datos: NoDetectado, request: Request):
+        u = getattr(request.state, "usuario", SIN_SESION)
+        return hacer(rendimiento.registrar_no_detectado, u, datos.fecha, datos.tipo, datos.lugar, datos.fuente,
+                     datos.observaciones)
+
+
 def silenciar_cortes(loop):
     """
     En Windows, asyncio imprime un error largo (ConnectionResetError, WinError 10054) cada vez que un
@@ -297,14 +334,15 @@ def silenciar_cortes(loop):
 class Servicio:
     """El motor más el ciclo en segundo plano que lo alimenta desde la API de datos."""
 
-    def __init__(self, cfg, cuentas=None, gestion=None):
+    def __init__(self, cfg, cuentas=None, gestion=None, rendimiento=None):
         self.cfg = cfg
         self.motor = Motor(cfg)
         self.cliente = ClienteDatos(cfg.url_datos)
         # correo (SMTP) y Telegram si están configurados; si no, consola. Los destinatarios del correo
         # son los usuarios marcados en la página Usuarios, y cada envío queda en la tabla notificaciones
         self.alertas = Alertas(destinatarios=cuentas.destinatarios if cuentas else None,
-                               registro=cuentas.anotar_notificacion if cuentas else None, gestion=gestion)
+                               registro=cuentas.anotar_notificacion if cuentas else None, gestion=gestion,
+                               rendimiento=rendimiento)
         self.candado = threading.Lock()
         self.conectado = False
         self.ultimo_error = None
@@ -399,7 +437,7 @@ def crear_app(cfg=None):
     async def ciclo_de_vida(_app):
         silenciar_cortes(asyncio.get_running_loop())
         print("Cargando modelos...")
-        estado["s"] = Servicio(cfg, cuentas, gestion)
+        estado["s"] = Servicio(cfg, cuentas, gestion, rendimiento)
         estado["s"].iniciar()
         print(f"Servicio de monitoreo listo · modo {cfg.modo_pronostico} · datos desde {cfg.url_datos}")
         al = estado["s"].alertas
@@ -420,8 +458,16 @@ def crear_app(cfg=None):
         print("Todavía no hay usuarios del dashboard. Crea el primer administrador (desde backend/):\n"
               '  python -m monitoreo.usuarios --crear-admin correo@asada.cr "Nombre"', flush=True)
     gestion = gestion_.GestionAlertas(cfg.base_usuarios)
+    rendimiento = rendimiento_.Rendimiento(gestion)
     _instalar_sesiones(app, cfg, cuentas)
     _instalar_gestion(app, gestion)
+
+    def hora_datos():
+        """La última hora procesada (las alertas van con la hora de los datos), o la de ahora."""
+        s = estado.get("s")
+        hora = s.motor.ultima_hora_procesada if s is not None else None
+        return hora if hora is not None else pd.Timestamp.now().floor("h")
+    _instalar_rendimiento(app, rendimiento, hora_datos)
     # en desarrollo el dashboard corre en el servidor de Vite (puerto 5173)
     app.add_middleware(CORSMiddleware, allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
                        allow_methods=["GET"], allow_headers=["*"])

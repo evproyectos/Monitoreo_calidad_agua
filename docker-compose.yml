@@ -86,6 +86,7 @@ services:
         required: false
     environment:
       URL_DATOS: ${URL_DATOS_DOCKER:-http://datos:8000}
+      MLFLOW_URL: http://mlflow:5000            # el F1 de cada día (rendimiento.py, RNF-003)
       CARPETA_MODELOS: /modelos
       CARPETA_REGISTROS: /registros
       BASE_DE_DATOS: postgresql://monitoreo:${POSTGRES_PASSWORD:-monitoreo}@db:5432/monitoreo
@@ -105,8 +106,11 @@ services:
       dockerfile_inline: |
         FROM python:3.13-slim
         RUN pip install --no-cache-dir "mlflow==3.17.2"
+    # --allowed-hosts: además del navegador (127.0.0.1:5000), el servicio de monitoreo, que registra el
+    # F1 de cada día; sin esto MLflow rechaza las solicitudes que llegan como mlflow:5000
     command: ["mlflow", "ui", "--backend-store-uri", "sqlite:////modelo/mlflow.db", "--host", "0.0.0.0",
-              "--port", "5000", "--workers", "1"]
+              "--port", "5000", "--workers", "1",
+              "--allowed-hosts", "mlflow:5000,localhost:5000,127.0.0.1:5000"]
     ports: ["127.0.0.1:5000:5000"]
     # toda la carpeta: si se montara mlflow.db sola y todavía no existiera, Docker crearía una carpeta
     # con ese nombre. Los archivos de cada corrida quedan en /modelo/mlartifacts
