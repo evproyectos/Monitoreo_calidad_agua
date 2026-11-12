@@ -2,26 +2,44 @@
 #
 #     docker compose up --build
 #
-# Los tres proyectos tienen que estar en la misma carpeta (como en D:\Practica_Profesional):
-#   Simulador_sensor/       API de datos y emisor (tiempo_real) y el dataset (datos/dtown/final)
-#   Modelo_calidad_agua/    paquete calidad_agua, modelos entrenados (modelos/) y MLflow
-#   Monitoreo_calidad_agua/ este proyecto
+# Modelo_calidad_agua tiene que estar clonado al lado de este proyecto (en la misma carpeta, como
+# en D:\Practica_Profesional). Los modelos entrenados y la historia de MLflow no se versionan: si
+# no están, el servicio `preparar` los descarga del release de GitHub que nombra
+# Modelo_calidad_agua/artefactos.json y comprueba su huella SHA-256.
 #
 # Servicios:
-#   datos       API de datos de los sensores                 http://127.0.0.1:8000
-#   emisor      manda las lecturas de la prueba a la API de datos (como los sensores)
+#   preparar    descarga los modelos si faltan y termina
 #   monitoreo   servicio con el dashboard                    http(s)://127.0.0.1:8001
 #   mlflow      experimentos de los notebooks                http://127.0.0.1:5000
 #   db          PostgreSQL con TimescaleDB: el servicio guarda ahí los resultados de cada hora
-#   mailpit     solo con  docker compose --profile correo up --build : correo de prueba que
-#               recibe los correos de las alertas y los muestra en http://127.0.0.1:8025
+#   datos       solo con el perfil `simulador`: API de datos con el dataset del simulador
+#   emisor      solo con el perfil `simulador`: manda las lecturas de la prueba a la API de datos
+#   mailpit     solo con el perfil `correo`: correo de prueba que recibe los correos de las alertas
+#               y los muestra en http://127.0.0.1:8025
+#
+# De dónde salen las lecturas: URL_DATOS_DOCKER en el .env (la API que mande los datos de los
+# sensores; URL_DATOS es la del servicio sin Docker). Sin ella se usa la API del simulador
+# (servicio `datos`), que necesita Simulador_sensor al lado y el perfil: COMPOSE_PROFILES=simulador
+# en el .env, o  docker compose --profile simulador up.
+# Los perfiles se suman con comas: COMPOSE_PROFILES=simulador,correo
 #
 # Los secretos (SMTP_CONTRASENA, TELEGRAM_TOKEN, CLAVES_API, ...) van en el .env de esta carpeta, que no se
 # versiona; sin él el servicio funciona igual, con las alertas en la consola. Si el .env tiene
 # CERTIFICADO_TLS y CLAVE_TLS, el servicio atiende por HTTPS con los archivos de secretos/.
 
 services:
+  preparar:
+    image: python:3.13-slim
+    command: ["python", "/preparar.py"]
+    environment:
+      ARTEFACTOS_URL: ${ARTEFACTOS_URL:-}
+    volumes:
+      - ../Modelo_calidad_agua:/modelo
+      - ./docker/preparar.py:/preparar.py:ro
+    restart: "no"
+
   datos:
+    profiles: ["simulador"]
     build:
       context: ..
       dockerfile: Monitoreo_calidad_agua/docker/datos.Dockerfile
@@ -34,6 +52,7 @@ services:
       retries: 10
 
   emisor:
+    profiles: ["simulador"]
     build:
       context: ..
       dockerfile: Monitoreo_calidad_agua/docker/datos.Dockerfile
@@ -66,7 +85,7 @@ services:
       - path: .env
         required: false
     environment:
-      URL_DATOS: http://datos:8000
+      URL_DATOS: ${URL_DATOS_DOCKER:-http://datos:8000}
       CARPETA_MODELOS: /modelos
       CARPETA_REGISTROS: /registros
       BASE_DE_DATOS: postgresql://monitoreo:${POSTGRES_PASSWORD:-monitoreo}@db:5432/monitoreo
@@ -77,7 +96,8 @@ services:
       # certificado de HTTPS (CERTIFICADO_TLS=secretos/certificado.pem en el .env); sin él, HTTP
       - ./secretos:/app/secretos:ro
     depends_on:
-      datos: {condition: service_healthy}
+      preparar: {condition: service_completed_successfully}
+      datos: {condition: service_healthy, required: false}      # solo con el perfil simulador
       db: {condition: service_healthy}
 
   mlflow:
@@ -85,12 +105,15 @@ services:
       dockerfile_inline: |
         FROM python:3.13-slim
         RUN pip install --no-cache-dir "mlflow==3.17.2"
-    command: ["mlflow", "ui", "--backend-store-uri", "sqlite:////mlflow/mlflow.db", "--host", "0.0.0.0",
+    command: ["mlflow", "ui", "--backend-store-uri", "sqlite:////modelo/mlflow.db", "--host", "0.0.0.0",
               "--port", "5000", "--workers", "1"]
     ports: ["127.0.0.1:5000:5000"]
+    # toda la carpeta: si se montara mlflow.db sola y todavía no existiera, Docker crearía una carpeta
+    # con ese nombre. Los archivos de cada corrida quedan en /modelo/mlartifacts
     volumes:
-      - ../Modelo_calidad_agua/mlflow.db:/mlflow/mlflow.db
-      - ../Modelo_calidad_agua/mlartifacts:/mlartifacts
+      - ../Modelo_calidad_agua:/modelo
+    depends_on:
+      preparar: {condition: service_completed_successfully}
 
   # correo de prueba (opcional): con SMTP_SERVIDOR=mailpit, SMTP_PUERTO=1025, SMTP_SEGURIDAD=ninguna
   # y SMTP_REMITENTE=alertas@asada.local en el .env, los correos llegan aquí y no a nadie de verdad

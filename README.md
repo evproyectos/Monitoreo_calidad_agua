@@ -64,36 +64,57 @@ Dockerfile, docker/, docker-compose.yml   el sistema completo en Docker con un s
 
 ## Con Docker (un solo comando)
 
-Con Docker Desktop instalado y los tres proyectos en la misma carpeta (`Simulador_sensor`,
-`Modelo_calidad_agua` y `Monitoreo_calidad_agua`, como en `D:\Practica_Profesional`), y con los
-modelos ya entrenados (notebooks 06 a 10) y el dataset exportado, desde esta carpeta:
+En una máquina nueva, solo con [Docker Desktop](https://www.docker.com/products/docker-desktop/)
+y [Git](https://git-scm.com/) instalados:
 
-```
-docker compose up --build
-```
+1. Crear una carpeta para el sistema y abrir una terminal en ella.
+2. `git clone https://github.com/evproyectos/Modelo_calidad_agua.git`
+3. `git clone https://github.com/evproyectos/Monitoreo_calidad_agua.git`
+4. `cd Monitoreo_calidad_agua`
+5. Si ya hay una API que mande las lecturas de los sensores, crear un archivo `.env` con la línea
+   `URL_DATOS_DOCKER=https://...` (ver **De dónde salen las lecturas**, abajo).
+6. `docker compose up --build`
+7. En otra terminal, en la misma carpeta, crear el administrador del dashboard (pide la
+   contraseña dos veces):
+   `docker compose exec monitoreo python -m monitoreo.usuarios --crear-admin correo@asada.cr "Nombre Apellido"`
+8. Abrir http://127.0.0.1:8001 y entrar con ese correo.
 
-La primera vez tarda unos minutos (instala TensorFlow y compila el dashboard); las siguientes,
-segundos. Levanta cinco servicios:
+Los dos proyectos tienen que quedar uno al lado del otro, en la misma carpeta, porque la imagen
+del servicio usa el paquete `calidad_agua` de `Modelo_calidad_agua`. La primera vez tarda unos
+minutos: descarga los modelos (unos 155 MB), instala TensorFlow y compila el dashboard. Las
+siguientes, segundos. Lo mismo vale en la PC de desarrollo (`D:\Practica_Profesional`), desde
+esta carpeta.
+
+**Los modelos.** `modelos/`, `mlflow.db` y `mlartifacts/` de `Modelo_calidad_agua` no se versionan:
+están en un release de GitHub de ese proyecto, el que nombra `Modelo_calidad_agua/artefactos.json`
+junto con la huella SHA-256 de cada archivo. El servicio `preparar` descarga lo que falte, comprueba
+la huella y termina; lo que ya está en la carpeta (por ejemplo, modelos recién reentrenados en esta
+máquina) no lo toca. Si el release no se puede descargar, el servicio no arranca y `preparar` dice
+por qué (sin la historia de MLflow sí arranca). Cómo publicar un release nuevo después de reentrenar:
+`Modelo_calidad_agua/README.md`, **Publicar los modelos**.
 
 | Servicio | Qué hace | Dirección |
 |---|---|---|
-| `datos` | API de datos de los sensores (`Simulador_sensor/tiempo_real`) | http://127.0.0.1:8000 |
-| `emisor` | manda las lecturas de la prueba como si fueran los sensores (31 días de precarga y después 1 h simulada por segundo; `VELOCIDAD=4 docker compose up` lo acelera) | — |
+| `preparar` | descarga los modelos y la historia de MLflow si faltan, y termina | — |
 | `monitoreo` | servicio con el dashboard, que guarda los resultados de cada hora también en la base de datos | http://127.0.0.1:8001 |
 | `db` | PostgreSQL 16 con TimescaleDB: tablas `pronosticos`, `deteccion`, `alarmas`, `anticipacion` y `fugas` (las que tienen fecha, como hipertablas), y `usuarios`, `sesiones`, `bitacora`, `notificaciones`, `alertas` y `alertas_historial` del dashboard | puerto 5432 dentro de Docker |
-| `mlflow` | los experimentos de los notebooks (lee `Modelo_calidad_agua/mlflow.db`) | http://127.0.0.1:5000 |
-| `mailpit` | solo con `docker compose --profile correo up --build`: servidor de correo de prueba que recibe los correos de las alertas sin mandarlos a nadie y los muestra en una página (ver **Alertas por correo**) | http://127.0.0.1:8025 |
+| `mlflow` | los experimentos de los notebooks (`Modelo_calidad_agua/mlflow.db`) | http://127.0.0.1:5000 |
+| `datos` | solo con el perfil `simulador`: API de datos con el dataset del simulador (`Simulador_sensor/tiempo_real`) | http://127.0.0.1:8000 |
+| `emisor` | solo con el perfil `simulador`: manda las lecturas de la prueba como si fueran los sensores (31 días de precarga y después 1 h simulada por segundo; `VELOCIDAD=4` en el `.env` lo acelera) | — |
+| `mailpit` | solo con el perfil `correo`: servidor de correo de prueba que recibe los correos de las alertas sin mandarlos a nadie y los muestra en una página (ver **Alertas por correo**) | http://127.0.0.1:8025 |
 
-La primera vez hay que crear el administrador del dashboard (pide la contraseña dos veces):
-
-```
-docker compose exec monitoreo python -m monitoreo.usuarios --crear-admin correo@asada.cr "Nombre Apellido"
-```
+**De dónde salen las lecturas.** En Docker, el servicio las pide a la API que diga
+`URL_DATOS_DOCKER` en el `.env` (`URL_DATOS` es la del servicio sin Docker, que suele ser
+`127.0.0.1` y dentro de un contenedor no sirve). Sin `URL_DATOS_DOCKER`, usa la API del simulador
+(servicio `datos`), que necesita el proyecto `Simulador_sensor` en la misma carpeta, con su
+dataset en `datos/dtown/final`, y el perfil `simulador`: la línea `COMPOSE_PROFILES=simulador` en
+el `.env` (los perfiles se suman con comas: `COMPOSE_PROFILES=simulador,correo`). Sin ninguna de
+las dos, el dashboard abre igual y avisa que no hay conexión con la API de datos.
 
 Los secretos van en el `.env` de esta carpeta, igual que sin Docker. Si el `.env` tiene
 `CERTIFICADO_TLS` y `CLAVE_TLS`, el contenedor usa los archivos de `secretos/` y el dashboard queda
-en **https**://127.0.0.1:8001. `docker compose down` lo
-apaga; `docker compose down -v` borra también la base de datos.
+en **https**://127.0.0.1:8001. `docker compose down` lo apaga; `docker compose down -v` borra
+también la base de datos (con los usuarios del dashboard).
 
 ## Instalación
 
@@ -107,7 +128,9 @@ pip install -e "..\..\Modelo_calidad_agua[red]"
 ```
 
 Los modelos se leen de `Modelo_calidad_agua/modelos/`, que se genera corriendo los
-notebooks 06 a 10 de ese proyecto. Para usar otra carpeta: variable de entorno
+notebooks 06 a 10 de ese proyecto o se descarga del release de GitHub con
+`set MODELO_DIR=..\..\Modelo_calidad_agua` y `python ..\docker\preparar.py` (lo mismo que hace
+Docker). Para usar otra carpeta: variable de entorno
 `CARPETA_MODELOS`. Si los modelos son de una versión anterior (sin pronóstico de lluvia), el
 servicio no arranca y pide volver a correr esos notebooks.
 

@@ -15,3 +15,5 @@ Modelo_calidad_agua/notebooks
 Modelo_calidad_agua/mlartifacts
 Modelo_calidad_agua/mlflow.db
 Modelo_calidad_agua/modelos
+Modelo_calidad_agua/artefactos
+Modelo_calidad_agua/mlruns
