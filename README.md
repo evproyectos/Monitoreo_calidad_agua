@@ -151,22 +151,32 @@ con la variable de entorno `FUENTE_PRONOSTICO`:
 **Lluvia observada (RNF-009).** Los tres modelos usan también la lluvia que ya cayó
 (`lluvia_mm_h`: el detector la de las últimas horas, las fugas la de 24 h y la anticipación la de
 30 días). Los sensores de la red no la miden; en el dataset viene de la estación 69-701 del IMN, que
-el simulador mete en las lecturas. La fuente se elige con `FUENTE_LLUVIA`, y cada fuente es un
-adaptador de la capa de ingesta (`backend/monitoreo/fuentes_lluvia.py`) que completa la lluvia de
-cada lectura antes de que llegue al motor:
+el simulador mete en las lecturas. Cada fuente es un adaptador de la capa de ingesta
+(`backend/monitoreo/fuentes_lluvia.py`) que completa la lluvia de cada lectura antes de que llegue
+al motor:
 
-- `lecturas` (por defecto): la lluvia viene en las lecturas, como la manda el simulador o la
-  mandaría un pluviómetro de la ASADA.
+- `lecturas`: la lluvia viene en las lecturas, como la manda el simulador o la mandaría un
+  pluviómetro de la ASADA.
 - `open-meteo`: se consulta Open-Meteo para la hora de cada lectura, con el modelo meteorológico de
   `LLUVIA_MODELOS` (por defecto `ecmwf_ifs025`, el que mejor coincide con la estación). Usa la
   Forecast API para los últimos 90 días y la Historical Forecast API para fechas más viejas (las
   del simulador), con los reintentos de RNF-002; si Open-Meteo no responde, esas horas quedan sin
   lluvia y `/health` da `degradado`.
 
-Otra fuente (otra API, una estación propia) se agrega con una clase nueva en ese archivo, sin
-tocar el servicio, el motor ni los modelos. Antes de pasar a `open-meteo` hay que reentrenar los
-modelos con esa misma lluvia: la comparación con el IMN y lo que pasa con cada modelo están en
-`Modelo_calidad_agua/docs/modelos/fuente-lluvia.md`.
+Los modelos tienen que operar con la misma lluvia con que se entrenaron, así que **por defecto el
+servicio usa la de los modelos**: el reentrenamiento deja `fuente_lluvia.json` en la carpeta de
+modelos (hoy: `open-meteo`, ECMWF). `FUENTE_LLUVIA` y `LLUVIA_MODELOS` la cambian; si no coinciden
+con las de los modelos, `/health` da `degradado` y dice qué hacer. La comparación con el IMN y lo
+que pasa con cada modelo están en `Modelo_calidad_agua/docs/modelos/fuente-lluvia.md`. Otra fuente
+(otra API, una estación propia) se agrega con una clase nueva en ese archivo, sin tocar el
+servicio, el motor ni los modelos.
+
+**Open-Meteo: límites y licencia.** La API gratuita es para uso no comercial (incluye proyectos sin
+fines de lucro, sin suscripciones ni publicidad) y permite 10 000 consultas al día por IP; el
+servicio hace menos de 100 (la lluvia de cada hora nueva y el pronóstico cada hora). Los datos son
+CC BY 4.0: el dashboard muestra el crédito a Open-Meteo al pie. Con un plan pagado, la clave va en
+`OPEN_METEO_API_KEY` y las consultas (lluvia y pronóstico) pasan a los dominios
+`customer-…open-meteo.com`.
 
 ## Pruebas
 
@@ -524,7 +534,8 @@ modo de falla y sus pruebas, está en [docs/arquitectura-resiliencia.md](docs/ar
 - En cada ciclo se procesan **juntas todas las horas cerradas pendientes**: armar las
   variables cuesta casi lo mismo para una hora que para muchas, así que el motor no se
   queda atrás aunque los datos lleguen acelerados (~70 ms por hora).
-- Las variables se arman con las últimas **96 h** de lecturas, limpiadas con las reglas de
+- Las variables se arman con las últimas **96 h** de lecturas (144 h si la anticipación es la LSTM,
+  porque cada secuencia mira 48 h de variables hacia atrás), limpiadas con las reglas de
   operación (presión, rango físico, sensor pegado) y el **preprocesamiento** (RF-001.3): quita los
   picos de cloro, turbidez, pH y temperatura por IQR, interpola los huecos de hasta 30 min y marca
   los más largos (`flag_imputacion`). Es el mismo código del entrenamiento
@@ -534,7 +545,7 @@ modo de falla y sus pruebas, está en [docs/arquitectura-resiliencia.md](docs/ar
   pronósticos se marcan como `calentando`. Después de un reinicio no hay calentamiento: el
   servicio sigue desde la última hora procesada (ver Resiliencia).
 - **Alarmas** (igual que en el notebook 07): un sensor entra en alarma si su probabilidad
-  de evento supera el umbral 3 horas seguidas; la alarma de red se cierra tras 2 horas
+  de evento supera el umbral las horas de confirmación seguidas (las del modelo guardado); la alarma de red se cierra tras 2 horas
   seguidas sin ningún sensor en alarma.
 - **Avisos anticipados** (igual que en el notebook 09): cada tipo de evento tiene su umbral y sus
   horas de confirmación; un tipo entra en aviso cuando su probabilidad de empezar en las próximas

@@ -111,6 +111,12 @@ export default function App({ sesion, onSalir, onActualizar }) {
           {lateral}
         </div>
       )}
+
+      {/* crédito que pide la licencia CC BY 4.0 de los datos de Open-Meteo (lluvia y pronóstico) */}
+      <footer className="pie-app">
+        Datos meteorológicos: <a href="https://open-meteo.com/" target="_blank" rel="noreferrer">Open-Meteo.com</a>,
+        licencia <a href="https://creativecommons.org/licenses/by/4.0/deed.es" target="_blank" rel="noreferrer">CC BY 4.0</a>
+      </footer>
     </div>
   );
 }

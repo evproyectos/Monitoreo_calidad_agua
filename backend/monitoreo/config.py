@@ -9,8 +9,10 @@ Configuración del servicio. Cada valor se puede cambiar con una variable de ent
                      emisor) u "open-meteo" (pronóstico vigente, para datos en tiempo real)
   FUENTE_LLUVIA      lluvia observada: "lecturas" (viene en las lecturas, como la manda el simulador)
                      u "open-meteo" (se consulta para cada hora; los sensores reales no miden lluvia).
-                     Ver monitoreo/fuentes_lluvia.py (RNF-009)
+                     Por defecto, la misma con que se entrenaron los modelos (fuente_lluvia.json en
+                     la carpeta de modelos). Ver monitoreo/fuentes_lluvia.py (RNF-009)
   LLUVIA_MODELOS     modelos meteorológicos de Open-Meteo para esa lluvia (separados por comas)
+  OPEN_METEO_API_KEY clave de un plan pagado de Open-Meteo (sin ella, la API gratuita)
   CERTIFICADO_TLS,   certificado y clave (PEM) para atender por HTTPS; rutas absolutas o
   CLAVE_TLS          relativas a la raíz del proyecto (ver monitoreo/seguridad.py)
   BASE_DE_DATOS      URL de SQLAlchemy donde guardar también los resultados de cada hora (p. ej.
@@ -54,7 +56,8 @@ class Config:
     carpeta_registros: Path = field(default_factory=lambda: Path(os.environ.get(
         "CARPETA_REGISTROS", RAIZ / "registros")))
     # historia que se usa para armar las variables: la que más mira hacia atrás es la lluvia de
-    # 72 h; se dejan 96 h de margen (la prueba de variables en vivo lo verifica)
+    # 72 h; se dejan 96 h de margen (la prueba de variables en vivo lo verifica). Si la anticipación
+    # es la LSTM, el motor guarda además su ventana (largo_h, 48 h): cada secuencia mira esas horas
     historia_h: int = 96
     # sin alarma en ningún sensor durante estas horas seguidas = la alarma de red se cierra
     # (equivale a unir alarmas separadas por menos de 2 h, como en la evaluación del notebook 07)

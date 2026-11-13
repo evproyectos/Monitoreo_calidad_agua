@@ -13,7 +13,9 @@ que se entrenaron (ECMWF IFS, GFS, ICON y GEM). Hay dos fuentes:
   open-meteo  el pronóstico vigente de la Forecast API de Open-Meteo, para operar con datos en
               tiempo real. Se consulta al arrancar y luego cada hora, con 3 reintentos y espera
               exponencial (reintentos.py, RNF-002); si igual falla, se sigue con el último
-              pronóstico y se vuelve a probar en 10 minutos.
+              pronóstico y se vuelve a probar en 10 minutos. Con OPEN_METEO_API_KEY (plan pagado)
+              usa el dominio customer-api.open-meteo.com con esa clave; sin ella, la API gratuita
+              (uso no comercial). Datos de Open-Meteo.com, licencia CC BY 4.0.
 
 Se elige con la variable de entorno FUENTE_PRONOSTICO.
 """
@@ -22,6 +24,7 @@ import json
 import os
 import threading
 import time
+import urllib.parse
 import urllib.request
 
 import pandas as pd
@@ -33,6 +36,17 @@ LATITUD, LONGITUD = 10.3606, -84.5135            # estación 69-701 ITCR, San Ca
 URL_OPEN_METEO = ("https://api.open-meteo.com/v1/forecast?latitude={lat}&longitude={lon}"
                   "&hourly=precipitation&models={modelos}&timezone=America%2FCosta_Rica"
                   "&past_days=2&forecast_days=3")
+
+
+def con_clave(url, clave=None):
+    """Con la clave del plan pagado de Open-Meteo (OPEN_METEO_API_KEY): el dominio customer-… de
+    la misma API y &apikey=. Sin clave, la URL queda igual (API gratuita)."""
+    clave = (os.environ.get("OPEN_METEO_API_KEY", "") if clave is None else clave).strip()
+    if not clave:
+        return url
+    partes = urllib.parse.urlsplit(url)
+    consulta = partes.query + ("&" if partes.query else "") + urllib.parse.urlencode({"apikey": clave})
+    return urllib.parse.urlunsplit(partes._replace(netloc="customer-" + partes.netloc, query=consulta))
 
 
 class PronosticoArchivo:
@@ -58,7 +72,7 @@ class PronosticoOpenMeteo:
     def _actualizar(self):
         if self.serie is not None and time.time() - self.consultado < self.cada_s:
             return
-        url = URL_OPEN_METEO.format(lat=LATITUD, lon=LONGITUD, modelos=",".join(self.modelos))
+        url = con_clave(URL_OPEN_METEO.format(lat=LATITUD, lon=LONGITUD, modelos=",".join(self.modelos)))
 
         def consultar():
             with urllib.request.urlopen(url, timeout=10) as r:

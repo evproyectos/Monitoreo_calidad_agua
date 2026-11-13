@@ -136,3 +136,34 @@ def test_una_fuente_nueva_es_solo_una_clase(monkeypatch, tmp_path):
     s.paso()
     assert s.fuente_lluvia.nombre == "pluviometro"
     assert (s.motor.bufer["lluvia_mm_h"] == 3.0).all()
+
+
+def test_sin_variable_usa_la_lluvia_con_que_se_entrenaron(tmp_path, monkeypatch):
+    for v in ("FUENTE_LLUVIA", "LLUVIA_MODELOS"):
+        monkeypatch.delenv(v, raising=False)
+    assert isinstance(fl.desde_entorno(tmp_path), fl.LluviaDeLecturas)        # sin marca: lecturas
+    (tmp_path / "fuente_lluvia.json").write_text('{"fuente": "open-meteo", "modelos": ["gfs_seamless"]}')
+    f = fl.desde_entorno(tmp_path)
+    assert isinstance(f, fl.LluviaOpenMeteo) and f.modelos == ["gfs_seamless"]
+    assert fl.diferencia(f, tmp_path) is None
+    monkeypatch.setenv("FUENTE_LLUVIA", "lecturas")                          # alguien la cambió a mano
+    texto = fl.diferencia(fl.desde_entorno(tmp_path), tmp_path)
+    assert "open-meteo (gfs_seamless)" in texto and "usa lecturas" in texto
+    monkeypatch.setenv("FUENTE_LLUVIA", "open-meteo")
+    monkeypatch.setenv("LLUVIA_MODELOS", "ecmwf_ifs025")
+    assert "usa open-meteo (ecmwf_ifs025)" in fl.diferencia(fl.desde_entorno(tmp_path), tmp_path)
+
+
+def test_con_clave_del_plan_pagado(monkeypatch):
+    from monitoreo import pronostico_lluvia as pl
+    monkeypatch.delenv("OPEN_METEO_API_KEY", raising=False)
+    url = "https://api.open-meteo.com/v1/forecast?latitude=1"
+    assert pl.con_clave(url) == url
+    monkeypatch.setenv("OPEN_METEO_API_KEY", "abc123")
+    assert pl.con_clave(url) == "https://customer-api.open-meteo.com/v1/forecast?latitude=1&apikey=abc123"
+    f, om = fuente()
+    f.clave = "abc123"
+    f.lluvia("2026-05-03 10:00", "2026-05-03 10:00")
+    assert om.urls[0].startswith("https://customer-historical-forecast-api.open-meteo.com/")
+    assert "apikey=abc123" in om.urls[0]
+    assert "abc123" not in str(f.estado())                                     # la clave no se muestra

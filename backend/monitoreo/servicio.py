@@ -352,7 +352,7 @@ class Servicio:
         self.cfg = cfg
         self.motor = Motor(cfg)
         # la lluvia observada, de la fuente elegida con FUENTE_LLUVIA (RNF-009, fuentes_lluvia.py)
-        self.fuente_lluvia = fuentes_lluvia.desde_entorno()
+        self.fuente_lluvia = fuentes_lluvia.desde_entorno(cfg.carpeta_modelos)
         self.cliente = fuentes_lluvia.ConLluvia(ClienteDatos(cfg.url_datos), self.fuente_lluvia)
         # correo (SMTP) y Telegram si están configurados; si no, consola. Los destinatarios del correo
         # son los usuarios marcados en la página Usuarios, y cada envío queda en la tabla notificaciones
@@ -620,6 +620,9 @@ def crear_app(cfg=None):
             problemas.append(f"pronóstico de lluvia: {e['error_pronostico_lluvia']}")
         if s.fuente_lluvia.error:
             problemas.append(f"lluvia observada ({s.fuente_lluvia.nombre}): {s.fuente_lluvia.error}")
+        otra_lluvia = fuentes_lluvia.diferencia(s.fuente_lluvia, s.cfg.carpeta_modelos)
+        if otra_lluvia:
+            problemas.append(otra_lluvia)
         if s.error_recarga:
             problemas.append(f"modelos nuevos sin cargar: {s.error_recarga}")
         if s.error_trabajadores:
@@ -629,7 +632,8 @@ def crear_app(cfg=None):
                 "modelos": {**m.version, "modo": m.modo,
                             "por_parametro": m.elegido, "umbral_detector": m.umbral},
                 "pronostico_lluvia": e["pronostico_lluvia"],
-                "lluvia_observada": s.fuente_lluvia.estado(),
+                "lluvia_observada": {**s.fuente_lluvia.estado(),
+                                     "modelos_entrenados_con": fuentes_lluvia.entrenados_con(s.cfg.carpeta_modelos)},
                 "conectado_a_datos": s.conectado,
                 "ultima_hora_procesada": e["ultima_hora_procesada"],
                 "alertas": s.alertas.nombre,

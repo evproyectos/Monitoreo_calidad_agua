@@ -4,16 +4,24 @@ Fuente de la lluvia observada (RNF-009): adaptadores de la capa de ingesta.
 Los tres modelos usan la lluvia que cayó (columna `lluvia_mm_h` de las lecturas): el detector la de
 las últimas horas, las fugas la de 24 h y la anticipación la de 30 días. Los sensores de la red no
 la miden; en el dataset viene de la estación 69-701 del IMN (ITCR, San Carlos), que el simulador
-mete en las lecturas. En operación sale de la fuente que se elija con FUENTE_LLUVIA:
+mete en las lecturas. En operación sale de una de estas fuentes:
 
-  lecturas    (por defecto) la lluvia viene en las mismas lecturas, como la manda el simulador o la
-              mandaría un pluviómetro de la ASADA. No se consulta nada.
+  lecturas    la lluvia viene en las mismas lecturas, como la manda el simulador o la mandaría un
+              pluviómetro de la ASADA. No se consulta nada.
   open-meteo  se consulta Open-Meteo para la hora de cada lectura: la Forecast API para los últimos
               90 días (lo que pasa en operación) y la Historical Forecast API para fechas más viejas
               (las del simulador). Las dos dan el mismo producto: las primeras horas de cada
               pronóstico, en el punto de la estación. Modelos meteorológicos: LLUVIA_MODELOS (el
               promedio, si son varios); la comparación con el IMN y el efecto en los modelos están en
-              Modelo_calidad_agua/docs/modelos/fuente-lluvia.md.
+              Modelo_calidad_agua/docs/modelos/fuente-lluvia.md. Con OPEN_METEO_API_KEY (plan
+              pagado) las consultas van a los dominios customer-…open-meteo.com con esa clave; sin
+              ella, a la API gratuita (uso no comercial, hasta 10 000 consultas al día por IP).
+              Datos de Open-Meteo.com, licencia CC BY 4.0.
+
+Cuál se usa: FUENTE_LLUVIA si está definida; si no, la misma con que se entrenaron los modelos
+(fuente_lluvia.json en la carpeta de modelos, que deja el reentrenamiento); si tampoco está,
+`lecturas`. Los modelos tienen que operar con la lluvia con que se entrenaron: si FUENTE_LLUVIA dice
+otra cosa, /health lo marca como degradado.
 
 Convención (la misma de lluvia_mm_h y de Open-Meteo): el valor horario de las 14:00 es la lluvia
 de 13:00 a 14:00, y va en las lecturas de las 14:00 a las 14:45.
@@ -32,11 +40,26 @@ import urllib.request
 import numpy as np
 import pandas as pd
 
-from monitoreo.pronostico_lluvia import LATITUD, LONGITUD
+from monitoreo.pronostico_lluvia import LATITUD, LONGITUD, con_clave
 from monitoreo.reintentos import reintentar
 
 COLUMNA = "lluvia_mm_h"
 MODELOS_OPEN_METEO = "ecmwf_ifs025"             # el que mejor coincide con la estación del IMN
+
+
+ARCHIVO_MODELOS = "fuente_lluvia.json"
+
+
+def entrenados_con(carpeta_modelos):
+    """La fuente con que se entrenaron los modelos ({"fuente", "modelos"}), o None si no se sabe."""
+    if carpeta_modelos is None:
+        return None
+    ruta = os.path.join(str(carpeta_modelos), ARCHIVO_MODELOS)
+    try:
+        with open(ruta, encoding="utf-8") as f:
+            return json.load(f)
+    except (OSError, ValueError):
+        return None
 
 
 class FuenteLluvia:
@@ -63,11 +86,12 @@ class LluviaOpenMeteo(FuenteLluvia):
     DIAS_RECIENTES = 90
     REINTENTAR_S = 600                   # una hora que no se pudo conseguir se vuelve a pedir en 10 min
 
-    def __init__(self, modelos=MODELOS_OPEN_METEO, latitud=LATITUD, longitud=LONGITUD,
+    def __init__(self, modelos=MODELOS_OPEN_METEO, latitud=LATITUD, longitud=LONGITUD, clave=None,
                  abrir=urllib.request.urlopen, dormir=time.sleep, reloj=time.time):
         self.modelos = [m.strip() for m in modelos.split(",") if m.strip()] if isinstance(modelos, str) \
             else list(modelos)
         self.latitud, self.longitud = latitud, longitud
+        self.clave = clave if clave is not None else os.environ.get("OPEN_METEO_API_KEY", "").strip()
         self.abrir, self.dormir, self.reloj = abrir, dormir, reloj
         self.descripcion = f"Open-Meteo ({', '.join(self.modelos)})"
         self.serie = pd.Series(dtype="float32")
@@ -80,7 +104,7 @@ class LluviaOpenMeteo(FuenteLluvia):
         params = {"latitude": self.latitud, "longitude": self.longitud, "hourly": "precipitation",
                   "models": ",".join(self.modelos), "timezone": "America/Costa_Rica",
                   "start_date": f"{inicio:%Y-%m-%d}", "end_date": f"{fin:%Y-%m-%d}"}
-        return f"{base}?{urllib.parse.urlencode(params)}"
+        return con_clave(f"{base}?{urllib.parse.urlencode(params)}", self.clave)
 
     def _consultar(self, inicio, fin):
         url = self._url(inicio, fin)
@@ -123,13 +147,31 @@ class LluviaOpenMeteo(FuenteLluvia):
 FUENTES = {"lecturas": LluviaDeLecturas, "open-meteo": LluviaOpenMeteo}
 
 
-def desde_entorno():
-    nombre = (os.environ.get("FUENTE_LLUVIA") or "lecturas").strip()
+def desde_entorno(carpeta_modelos=None):
+    """FUENTE_LLUVIA; si no está, la de los modelos (fuente_lluvia.json); si no, `lecturas`."""
+    marca = entrenados_con(carpeta_modelos) or {}
+    nombre = (os.environ.get("FUENTE_LLUVIA") or marca.get("fuente") or "lecturas").strip()
     if nombre not in FUENTES:
         raise ValueError(f"FUENTE_LLUVIA debe ser una de: {', '.join(FUENTES)}")
     if nombre == "open-meteo":
-        return LluviaOpenMeteo(os.environ.get("LLUVIA_MODELOS") or MODELOS_OPEN_METEO)
+        modelos = os.environ.get("LLUVIA_MODELOS") or ",".join(marca.get("modelos") or []) or MODELOS_OPEN_METEO
+        return LluviaOpenMeteo(modelos)
     return FUENTES[nombre]()
+
+
+def diferencia(fuente, carpeta_modelos):
+    """Texto del problema si los modelos se entrenaron con otra lluvia que la que se usa, o None."""
+    marca = entrenados_con(carpeta_modelos)
+    if not marca:
+        return None
+    usada = {"fuente": fuente.nombre, "modelos": getattr(fuente, "modelos", [])}
+    otros_modelos = usada["fuente"] == "open-meteo" and list(marca.get("modelos") or []) != usada["modelos"]
+    if marca.get("fuente") != usada["fuente"] or otros_modelos:
+        def texto(x):
+            return x["fuente"] + (f" ({', '.join(x['modelos'])})" if x.get("modelos") else "")
+        return (f"los modelos se entrenaron con la lluvia de {texto(marca)} y el servicio usa {texto(usada)}; "
+                "hay que reentrenarlos o cambiar FUENTE_LLUVIA")
+    return None
 
 
 class ConLluvia:

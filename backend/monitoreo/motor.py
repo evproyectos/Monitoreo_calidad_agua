@@ -235,6 +235,13 @@ class Motor:
             corte = self.ultima_hora_procesada - pd.Timedelta(days=DIAS_DERIVA)
             self.historia_deriva = h[(h.index > corte) & (h.index <= self.ultima_hora_procesada)]
 
+    def _historia(self):
+        """Horas de lecturas que se usan para las variables: `historia_h`, y si la anticipación es la
+        LSTM, además su ventana (cada secuencia mira `largo_h` horas de variables hacia atrás)."""
+        a = getattr(self.modelos, "anticipacion", None)
+        extra = a.get("largo_h", 0) if isinstance(a, dict) and a.get("nombre") == "LSTM" else 0
+        return pd.Timedelta(hours=self.cfg.historia_h + extra)
+
     def horas_pendientes(self):
         """Horas completas que todavía no se procesaron (la hora en curso no cuenta)."""
         if self.ultima_lectura is None:
@@ -257,7 +264,7 @@ class Motor:
         horas = self.horas_pendientes()
         if len(horas) == 0:
             return []
-        desde = horas[0] - pd.Timedelta(hours=self.cfg.historia_h) + pd.Timedelta(minutes=15)
+        desde = horas[0] - self._historia() + pd.Timedelta(minutes=15)
         hasta = horas[-1] + pd.Timedelta(minutes=45)
         # el preprocesamiento (picos e interpolación) mira las lecturas vecinas: se le pasan las que
         # ya llegaron después de la hora (hasta 30 min) y después se recorta
@@ -312,7 +319,7 @@ class Motor:
         self.ultima_hora_procesada = horas[-1]
 
         # el búfer solo necesita la historia de las variables
-        limite = self.ultima_hora_procesada - pd.Timedelta(hours=self.cfg.historia_h + 2)
+        limite = self.ultima_hora_procesada - self._historia() - pd.Timedelta(hours=2)
         self.bufer = self.bufer.loc[self.bufer.index > limite]
         return novedades
 
