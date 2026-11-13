@@ -203,7 +203,7 @@ class Aviso:
 
     @classmethod
     def prueba(cls, para):
-        texto = ("✅ <b>Correo de prueba</b>\n"
+        texto = ("<b>Correo de prueba</b>\n"
                  f"{_fecha(datetime.now())} · el servicio de monitoreo puede enviar las alertas por correo.\n"
                  "Las alertas reales dicen en el asunto el nivel (roja o amarilla), qué pasa y en qué sensor o "
                  "tramo; adentro, la probabilidad, la antelación y qué hacer.")
@@ -489,7 +489,7 @@ class Alertas:
         tipo = self._tipo_alarma(motor, n)
         tipo_txt = TIPOS.get(tipo, "Evento sin clasificar")
         plural = "es" if len(n["sensores"]) > 1 else ""
-        lineas = [f"🔴 <b>Alarma #{n['id']}: {html.escape(tipo_txt)}</b> (tipo sugerido)",
+        lineas = [f"<b>Alarma #{n['id']}: {html.escape(tipo_txt)}</b> (tipo sugerido)",
                   f"{_fecha(n['hora'])} · {len(n['sensores'])} sensor{plural} en alarma"]
         orden = self._orden(n, sensores)
         for nodo in orden[:6]:
@@ -512,7 +512,7 @@ class Alertas:
         return "\n".join(lineas), "rojo", asunto
 
     def _texto_fuga(self, n):
-        lineas = [f"🔴 <b>Posible fuga #{n['id']}</b>",
+        lineas = [f"<b>Posible fuga #{n['id']}</b>",
                   f"{_fecha(n['hora'])} · probabilidad {_pct(n['probabilidad'])} (umbral {_pct(n['umbral'])})",
                   f"Tramo más probable: <b>{html.escape(str(n['tramo']))}</b> ({_pct(n['p_tramo'])})",
                   f"La fuente entrega {_num(n['caudal_residuo'], 1)} L/s más de lo esperado a esta hora.",
@@ -523,8 +523,8 @@ class Alertas:
     def _texto_fuga_cerrada(self, motor, n):
         a = next((x for x in motor.fugas if x["id"] == n["id"]), None)
         if a is None:
-            return f"🟢 <b>Fuga #{n['id']}: alarma cerrada</b> · {_fecha(n['hora'])}", "rojo", None
-        return (f"🟢 <b>Fuga #{a['id']}: alarma cerrada</b> · tramo {html.escape(str(a['tramo']))}\n"
+            return f"<b>Fuga #{n['id']}: alarma cerrada</b> · {_fecha(n['hora'])}", "rojo", None
+        return (f"<b>Fuga #{a['id']}: alarma cerrada</b> · tramo {html.escape(str(a['tramo']))}\n"
                 f"De {_fecha(a['inicio'])} a {_fecha(a['fin'])} ({a['horas']} h) · hasta "
                 f"{_num(a['caudal_extra_Ls'], 1)} L/s de más"), "rojo", f"Fuga #{a['id']} cerrada · tramo {a['tramo']}"
 
@@ -532,7 +532,7 @@ class Alertas:
         cols = " · ".join(f"{html.escape(c)} (PSI {_num(v)})" for c, v in n["columnas"][:8])
         asunto = "Alerta amarilla · Los datos se apartan de lo habitual: " + ", ".join(
             str(c) for c, _ in n["columnas"][:3]) + (" y otros" if len(n["columnas"]) > 3 else "")
-        return (f"🟠 <b>Los datos se apartan de los del entrenamiento</b> · {_fecha(n['hora'])}\n"
+        return (f"<b>Los datos se apartan de los del entrenamiento</b> · {_fecha(n['hora'])}\n"
                 f"Última semana: {cols}\n"
                 "<b>Qué hacer:</b> revisar y calibrar esos sensores; si las lecturas están bien, la operación "
                 "cambió y conviene volver a entrenar los modelos (Modelo_calidad_agua/herramientas/reentrenar.py)."), \
@@ -540,7 +540,7 @@ class Alertas:
 
     def _texto_rendimiento(self, r):
         meta = self.rendimiento.f1_minimo
-        return (f"🟠 <b>Las alarmas están acertando menos</b> · F1 de {_pct(r['f1'])} en los últimos "
+        return (f"<b>Las alarmas están acertando menos</b> · F1 de {_pct(r['f1'])} en los últimos "
                 f"{self.rendimiento.dias} días (meta ≥ {_pct(meta)})\n"
                 f"Verificado en campo: {_cuantos(r['confirmadas'], 'confirmada', 'confirmadas')}, "
                 f"{_cuantos(r['descartadas'], 'falso positivo', 'falsos positivos')} y "
@@ -553,16 +553,16 @@ class Alertas:
     def _texto_cerrada(self, motor, n):
         a = next((x for x in motor.alarmas if x["id"] == n["id"]), None)
         if a is None:
-            return f"🟢 <b>Alarma #{n['id']} cerrada</b> · {_fecha(n['hora'])}", "rojo", None
+            return f"<b>Alarma #{n['id']} cerrada</b> · {_fecha(n['hora'])}", "rojo", None
         nombre = TIPOS.get(a["tipo_sugerido"], a["tipo_sugerido"])
-        return (f"🟢 <b>Alarma #{a['id']} cerrada</b> · {html.escape(nombre)}\n"
+        return (f"<b>Alarma #{a['id']} cerrada</b> · {html.escape(nombre)}\n"
                 f"De {_fecha(a['inicio'])} a {_fecha(a['fin'])} ({a['horas']} h) · sensores: {a['sensores']}"), \
             "rojo", f"Alarma #{a['id']} cerrada · {_minus(nombre)} · {a['sensores']}"
 
     def _texto_aviso(self, motor, n):
         tipo = n["tipo"]
         nombre = TIPOS.get(tipo, "Evento fuera de lo normal") if tipo != "anomalia" else "Operación fuera de lo normal"
-        lineas = [f"🟡 <b>Aviso anticipado: posible {html.escape(_minus(nombre))} en las próximas 24 h</b>",
+        lineas = [f"<b>Aviso anticipado: posible {html.escape(_minus(nombre))} en las próximas 24 h</b>",
                   f"{_fecha(n['hora'])} · probabilidad {_pct(n['probabilidad'])} (umbral {_pct(n['umbral'])})",
                   f"Señal: {SENALES.get(tipo, SENALES['anomalia'])}."]
         llegadas = _llegada(motor, set()) if tipo in EMPIEZAN_EN_LA_FUENTE else []
@@ -598,7 +598,7 @@ class Alertas:
         nuevos, enlace = self._guardar_riesgos(nuevos, ahora)
         if nuevos:
             para = _fecha(ahora + pd.Timedelta(hours=24))
-            lineas = [f"🟠 <b>Riesgo en 24 h</b>: pronóstico fuera de norma para el {para}"]
+            lineas = [f"<b>Riesgo en 24 h</b>: pronóstico fuera de norma para el {para}"]
             for nodo, par, v, limite in nuevos[:10]:
                 lineas.append(f"• <b>{nodo}</b>: {NOMBRE[par]} {_num(v)}{UNIDAD[par]} ({limite})")
             if len(nuevos) > 10:
@@ -641,7 +641,7 @@ class Alertas:
         fuera = [f"{nodo} ({NOMBRE[p]})" for nodo, s in sensores.items() for p in ["CL2", "TURB", "PH"]
                  if fuera_de_norma(p, s.get(p))]
         riesgo = sorted({f"{nodo} ({NOMBRE[p]})" for nodo, p in self.riesgo})
-        lineas = [f"📋 <b>Resumen</b> · {_fecha(ahora)}",
+        lineas = [f"<b>Resumen</b> · {_fecha(ahora)}",
                   f"Alarmas en las últimas 24 h: {len(alarmas)}"
                   + (" (una en curso)" if motor.alarma_abierta else "")]
         for a in alarmas[-5:]:
@@ -687,7 +687,7 @@ if __name__ == "__main__":
         canal = next((c for c in canales_desde_entorno() if c.nombre == "telegram"), None)
         if canal is None:
             raise SystemExit("Faltan TELEGRAM_TOKEN y TELEGRAM_CHAT_ID.")
-        canal.enviar(Aviso("✅ <b>Prueba</b> del servicio de monitoreo de calidad de agua. "
+        canal.enviar(Aviso("<b>Prueba</b> del servicio de monitoreo de calidad de agua. "
                            "Las alertas llegan a este chat."))
         print("Mensaje enviado.")
     else:

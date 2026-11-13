@@ -200,8 +200,8 @@ def test_telegram_manda_a_cada_chat_y_avisa_si_falla(monkeypatch):
 
 
 def test_consola_quita_el_formato(capsys):
-    alertas.CanalConsola().enviar(alertas.Aviso("<b>Alarma</b> 🔴 &lt;J10&gt;"))
-    assert capsys.readouterr().out.strip() == "[alerta] Alarma 🔴 <J10>"
+    alertas.CanalConsola().enviar(alertas.Aviso("<b>Alarma</b> &lt;J10&gt;"))
+    assert capsys.readouterr().out.strip() == "[alerta] Alarma <J10>"
 
 
 def test_llamadas_sin_horas_nuevas_no_cuentan_para_cerrar_el_riesgo(cfg, al):

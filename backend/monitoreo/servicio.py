@@ -456,7 +456,7 @@ class Servicio:
                 duracion = _duracion(ahora - self.sin_datos_desde)
                 self.sin_datos_desde = None
                 self.alertas.avisar(
-                    f"✅ <b>Vuelven a llegar datos de los sensores</b>\nEstuvieron sin llegar {duracion}. "
+                    f"<b>Vuelven a llegar datos de los sensores</b>\nEstuvieron sin llegar {duracion}. "
                     "Las horas que quedaron pendientes se procesan en orden, sin saltarse ninguna.",
                     "resumen", "ASADA La Lucha · Vuelven a llegar los datos de los sensores")
             return
@@ -469,7 +469,7 @@ class Servicio:
             else "todavía no ha llegado ninguna"
         duracion = _duracion(ahora - self._vista_t)
         self.alertas.avisar(
-            f"⚠️ <b>No están llegando datos de los sensores</b>\nHace {duracion} que no llega ninguna lectura "
+            f"<b>No están llegando datos de los sensores</b>\nHace {duracion} que no llega ninguna lectura "
             f"nueva ({desde}); {causa}.\nMientras tanto el sistema no puede detectar eventos. Cuando vuelvan, "
             "las horas pendientes se procesan en orden, sin perder ninguna.",
             "resumen", f"ASADA La Lucha · Sin datos de los sensores desde hace {duracion}")

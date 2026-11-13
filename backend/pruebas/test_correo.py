@@ -8,7 +8,7 @@ import pytest
 from monitoreo import alertas, correo
 from monitoreo.usuarios import Usuarios
 
-TEXTO_ROJO = ("🔴 <b>Alarma #1: Contaminación</b> (tipo sugerido)\n01/05/2026 06:00:00 · 1 sensor\n"
+TEXTO_ROJO = ("<b>Alarma #1: Contaminación</b> (tipo sugerido)\n01/05/2026 06:00:00 · 1 sensor\n"
               "• <b>J10</b> (95 %): cloro 0,10 mg/L\n<b>Qué hacer:</b> tomar muestras &amp; aislar.\n"
               "https://127.0.0.1:8001/#/sensor/J10")
 ASUNTO_ROJO = "Alerta roja · Alarma #1: contaminación en J10"
@@ -83,7 +83,7 @@ def test_mensaje_en_texto_y_html(smtp):
 
 
 def test_resumen_va_a_quien_recibe_cualquier_nivel(smtp):
-    canal().enviar(alertas.Aviso("📋 <b>Resumen</b>", "resumen"))
+    canal().enviar(alertas.Aviso("<b>Resumen</b>", "resumen"))
     assert sorted(m["To"] for m in smtp.enviados) == ["ana@asada.cr", "luis@asada.cr", "marta@asada.cr"]
 
 
@@ -166,9 +166,9 @@ def test_sin_destinatarios_se_registra(smtp, tmp_path):
     cuentas = Usuarios(f"sqlite:///{tmp_path}/u.db")
     a = alertas.Alertas(canales=[correo.CanalCorreo("smtp.ejemplo.com", remitente="a@b.cr")],
                         registro=cuentas.anotar_notificacion)
-    a._envios[0].mandar(alertas.Aviso("🟡 <b>Aviso</b>", "amarillo"))
+    a._envios[0].mandar(alertas.Aviso("<b>Aviso</b>", "amarillo"))
     (n,) = cuentas.ver_notificaciones()
-    assert n["estado"] == "sin_destinatarios" and n["asunto"] == "🟡 Aviso" and not smtp.enviados
+    assert n["estado"] == "sin_destinatarios" and n["asunto"] == "Aviso" and not smtp.enviados
 
 
 def test_correo_de_prueba(smtp):

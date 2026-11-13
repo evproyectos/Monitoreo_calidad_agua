@@ -193,7 +193,7 @@ def test_sin_base_de_datos_se_notifica_igual(cfg, capsys):
 
 def test_boton_del_correo_lleva_a_la_alerta():
     from monitoreo import correo
-    pagina = correo.cuerpo_html("🔴 <b>Alarma</b>\nhttps://x/#/sensor/J10", "rojo", "https://x",
+    pagina = correo.cuerpo_html("<b>Alarma</b>\nhttps://x/#/sensor/J10", "rojo", "https://x",
                                 alerta="https://x/#/alertas/7")
     assert 'href="https://x/#/alertas/7"' in pagina and "Ver y atender la alerta" in pagina
 
