@@ -557,7 +557,8 @@ modo de falla y sus pruebas, está en [docs/arquitectura-resiliencia.md](docs/ar
 - **Cola persistente:** la API de datos guarda las lecturas y el servicio guarda en la base de
   datos la última hora procesada (`cursor.py`). Si la API se cae, al volver se procesan en orden
   todas las horas pendientes; si el servicio se reinicia, sigue con la hora siguiente y rearma con
-  los últimos 31 días la lluvia de 30 días, la semana de las fugas y la de la deriva.
+  los últimos 31 días la lluvia de 30 días, la semana de las fugas y la de la deriva, y el estado
+  del dashboard (repasa sin avisar las 192 horas anteriores: no queda vacío hasta la hora siguiente).
 - **Base de datos caída:** los resultados se escriben siempre en el CSV de `registros/` y las filas
   para la base esperan hasta que vuelva.
 - **Datos que no llegan:** si pasan 60 min sin lecturas nuevas (`SIN_DATOS_MIN`), se avisa por correo

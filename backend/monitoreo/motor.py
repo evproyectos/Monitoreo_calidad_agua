@@ -133,6 +133,7 @@ class Motor:
         self.ultima_anticipacion = {}
         self.lluvia_horaria = pd.Series(dtype="float64")
         self._rearmar_historia = False
+        self._repasando = False
         self.anticipaciones = []                  # probabilidades por hora y tipo (DataFrames por lote)
 
         # estado de las fugas
@@ -205,6 +206,9 @@ class Motor:
         lecturas anteriores que lleguen sirven de historia: las variables de los modelos, la lluvia
         de 30 días de la anticipación, la semana de caudal y presión de las fugas y la semana de la
         deriva se rearman con ellas antes de seguir (sin esto quedarían incompletas hasta 30 días).
+        Además se repasan sin avisar ni registrar las últimas `HORAS_REPASO` horas ya procesadas,
+        para que el dashboard tenga enseguida el estado de los sensores, sus series y las alarmas,
+        avisos y fugas que seguían abiertos (si no, quedaba vacío hasta la hora siguiente).
         """
         self.ultima_hora_procesada = pd.Timestamp(hora)
         self._rearmar_historia = True
@@ -235,6 +239,18 @@ class Motor:
             corte = self.ultima_hora_procesada - pd.Timedelta(days=DIAS_DERIVA)
             self.historia_deriva = h[(h.index > corte) & (h.index <= self.ultima_hora_procesada)]
 
+    HORAS_REPASO = 192                    # los 7 días del dashboard y el pronóstico hecho 24 h antes
+
+    def _repasar(self):
+        """Vuelve a calcular, sin avisar ni registrar, las últimas horas hasta el cursor (ver reanudar)."""
+        if self.bufer.empty or self.primera_lectura is None:
+            return
+        hasta = self.ultima_hora_procesada
+        desde = max(hasta - pd.Timedelta(hours=self.HORAS_REPASO - 1), self.primera_lectura.ceil("h"))
+        horas = pd.date_range(desde, hasta, freq="1h")
+        if len(horas):
+            self._procesar(horas, repaso=True)                # sus novedades ya se avisaron antes
+
     def _historia(self):
         """Horas de lecturas que se usan para las variables: `historia_h`, y si la anticipación es la
         LSTM, además su ventana (cada secuencia mira `largo_h` horas de variables hacia atrás)."""
@@ -261,9 +277,16 @@ class Motor:
         self._pasar_al_bufer()
         if self._rearmar_historia:
             self._sembrar_historia()
+            self._repasar()
         horas = self.horas_pendientes()
         if len(horas) == 0:
             return []
+        return self._procesar(horas)
+
+    def _procesar(self, horas, repaso=False):
+        """Las horas dadas. Con `repaso`, solo rearma el estado: no registra ni acumula resultados."""
+        registrar = self.carpeta_sesion and not repaso
+        self._repasando = repaso
         desde = horas[0] - self._historia() + pd.Timedelta(minutes=15)
         hasta = horas[-1] + pd.Timedelta(minutes=45)
         # el preprocesamiento (picos e interpolación) mira las lecturas vecinas: se le pasan las que
@@ -304,16 +327,17 @@ class Motor:
                     "en_alarma": n in en_alarma} for n in self.sensores}
 
         if getattr(self.modelos, "anticipacion", None) is not None:
-            novedades += self._anticipar(w15, horas, listas)
+            novedades += self._anticipar(w15, horas, listas, registrar)
         if getattr(self.modelos, "fugas", None) is not None:
-            novedades += self._revisar_fugas(hd, horas, listas)
+            novedades += self._revisar_fugas(hd, horas, listas, registrar)
         if getattr(self.modelos, "deriva", None) is not None:
             novedades += self._revisar_deriva(w15, horas)
 
-        self.pronosticos.append(pron)
-        self.deteccion.append(det)
+        if not repaso:
+            self.pronosticos.append(pron)
+            self.deteccion.append(det)
         self._actualizar_reciente(pron, det)
-        if self.carpeta_sesion:
+        if registrar:
             self.reg_pron.escribir(pron.to_dict("records"))
             self.reg_det.escribir(det.assign(tipo=det["tipo"].map(carga.TIPOS_EVENTO)).to_dict("records"))
         self.ultima_hora_procesada = horas[-1]
@@ -345,7 +369,7 @@ class Motor:
         return []
 
     # ------------------------------------------------------------------ fugas
-    def _revisar_fugas(self, hd, horas, listas):
+    def _revisar_fugas(self, hd, horas, listas, registrar=True):
         f = self.modelos.fugas
         cols = _columnas_fugas(hd)
         # se guardan las horas nuevas; las que ya estaban no se reemplazan: se calcularon cuando eran
@@ -375,7 +399,7 @@ class Motor:
                                 "caudal_residuo": float(fila["caudal_residuo"])}
         lista = F[F.index.isin(listas)]
         self.probabilidades_fuga.append(lista)
-        if self.carpeta_sesion and len(lista):
+        if registrar and self.carpeta_sesion and len(lista):
             self.reg_fugas.escribir(lista.rename_axis("fecha").reset_index().to_dict("records"))
         return novedades
 
@@ -442,7 +466,7 @@ class Motor:
                 "modelo": f["nombre"], "confirmar_h": f["confirmar_h"]}
 
     # ------------------------------------------------------------------ anticipación
-    def _anticipar(self, w15, horas, listas):
+    def _anticipar(self, w15, horas, listas, registrar=True):
         ha = anticipacion.horario(w15)
         # lluvia de 30 días: el búfer guarda solo `historia_h` horas, así que la lluvia horaria se
         # guarda aparte
@@ -481,7 +505,7 @@ class Motor:
                               "en_aviso": en_aviso})
                 novedades += self._actualizar_aviso(hora, k, p, umbral, en_aviso)
             self.ultima_anticipacion = {"hora": hora, "tipos": estado}
-        if self.carpeta_sesion and filas:
+        if registrar and self.carpeta_sesion and filas:
             self.reg_ant.escribir(filas)
         return novedades
 
@@ -548,7 +572,7 @@ class Motor:
                 cerrada = self._alarma_json(a)
                 self.alarmas.append(cerrada)
                 self.alarma_abierta = None
-                if self.carpeta_sesion:
+                if self.carpeta_sesion and not self._repasando:
                     self.reg_alarmas.escribir([cerrada])
                 return [{"evento": "alarma_cerrada", "id": cerrada["id"], "hora": str(hora)}]
         return []

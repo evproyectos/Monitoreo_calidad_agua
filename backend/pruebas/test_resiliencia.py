@@ -251,11 +251,40 @@ def test_al_reanudar_se_rearman_la_lluvia_de_30_dias_y_las_semanas_de_fugas_y_de
     motor.procesar()
     assert motor.lluvia_horaria.index.min() < cursor - pd.Timedelta(days=25)   # no solo `historia_h` horas
     assert float(pd.Series(modelos.lluvia_mes).max()) > 0     # la lluvia de hace 29-30 días sí cuenta
-    (hd,) = vistas                                            # las fugas ven la semana anterior completa
+    hd = vistas[-1]                                           # las fugas ven la semana anterior completa
+    assert len(vistas) == 2                                   # (antes, el repaso de las horas ya procesadas)
     assert hd.index.min() <= cursor - pd.Timedelta(days=8) and hd.index.is_unique
     assert hd.index.max() == cursor + 2 * H
     assert motor.historia_deriva.index.min() <= cursor - pd.Timedelta(days=6)   # la semana de la deriva
-    assert motor.ultima_deriva["desde"] == str(motor.historia_deriva.index.min())
+    # la última revisión (la del repaso) ya vio la semana completa
+    assert pd.Timestamp(motor.ultima_deriva["desde"]) <= cursor - pd.Timedelta(days=6)
+
+
+def test_al_reanudar_el_dashboard_tiene_enseguida_el_estado_de_antes(cfg):
+    """Sin lecturas nuevas después del reinicio, el dashboard muestra lo mismo que antes (no queda
+    vacío hasta la hora siguiente) y no se avisa ni se registra otra vez lo que ya se procesó."""
+    def modelos():
+        return ModelosFalsos(p_evento=lambda h, n: 0.95 if n == "J10" and h >= INICIO + 100 * H else 0.1,
+                             p_anticipa=lambda hora, tipo: 0.2, p_fuga=lambda hora: 0.3)
+    todas = lecturas(10 * 24)
+    antes = Motor(cfg, modelos(), registrar=False)
+    for x in todas:
+        antes.recibir(x["fecha"], x["valores"])
+    antes.procesar()
+    cursor = antes.ultima_hora_procesada
+    assert antes.alarma_abierta is not None
+
+    despues = Motor(cfg, modelos(), registrar=False)          # reinicio: motor nuevo
+    despues.reanudar(cursor)
+    for x in todas:                                           # la historia que pide el servicio; nada nuevo
+        despues.recibir(x["fecha"], x["valores"])
+    assert despues.procesar() == []                           # nada que avisar de nuevo
+    assert despues.resumen_sensores() == antes.resumen_sensores()
+    assert despues.series_red(168) == antes.series_red(168)
+    assert despues.alarma_abierta["inicio"] == antes.alarma_abierta["inicio"]
+    assert despues.resumen_anticipacion() == antes.resumen_anticipacion()
+    assert despues.resumen_fugas()["serie"] == antes.resumen_fugas()["serie"]
+    assert despues.deteccion == [] and despues.ultima_hora_procesada == cursor   # no se repite ninguna hora
 
 
 # ---------------------------------------------------------------------------- datos que no llegan
