@@ -1,9 +1,12 @@
-import { useState } from "react";
+import { lazy, Suspense, useState } from "react";
 import { PARAMETROS } from "../formato.js";
-import GraficoRed, { EXTREMOS, TEXTO_EXTREMO, resumenRed } from "./GraficoRed.jsx";
+import { EXTREMOS, TEXTO_EXTREMO, resumenRed } from "./serieRed.js";
 import MapaCalor from "./MapaCalor.jsx";
 import Anticipacion from "./Anticipacion.jsx";
 import Fugas from "./Fugas.jsx";
+
+// El gráfico (recharts) se carga aparte, después de lo demás (RNF-001)
+const GraficoRed = lazy(() => import("./GraficoRed.jsx"));
 
 const HORAS = 168;                        // RF-003.2 b: los últimos 7 días
 
@@ -38,7 +41,9 @@ export default function VistaGeneral({ sensores, referencias, red, anticipacion,
           <span><i className="norma" /> Límites de la norma</span>
         </div>
         {puntos.length ? (
-          <GraficoRed par={par} puntos={puntos} ahora={red?.ahora} norma={norma?.[par]} />
+          <Suspense fallback={<div className="grafico-red"><div className="lienzo alto" /></div>}>
+            <GraficoRed par={par} puntos={puntos} ahora={red?.ahora} norma={norma?.[par]} />
+          </Suspense>
         ) : (
           <p className="vacio">Cargando las series de la red…</p>
         )}

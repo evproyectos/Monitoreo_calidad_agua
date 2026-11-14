@@ -1,4 +1,4 @@
-import { Line, LineChart, ReferenceLine, ResponsiveContainer, YAxis } from "recharts";
+import { lazy, Suspense } from "react";
 import { useColores } from "../colores.js";
 import { numero, PARAMETROS } from "../formato.js";
 import { NIVELES, nivelSensor } from "../estado.js";
@@ -7,19 +7,14 @@ import { ordenRed } from "./RedSensores.jsx";
 // Una tarjeta por punto de medición, de la fuente al extremo de la red, con su semáforo, el
 // cloro actual y su curva de 7 días, y la turbidez y el pH. Al final, la tarjeta de fugas.
 
-function Curva({ valores, minimo, color, alto = 44 }) {
-  const c = useColores();
-  const datos = valores.map((v, i) => ({ i, v }));
+// La curva se carga aparte (recharts); mientras tanto queda su espacio, para que nada se mueva.
+const CurvaGrafico = lazy(() => import("./Curva.jsx"));
+
+function Curva(props) {
   return (
-    <div className="curva" aria-hidden="true">
-      <ResponsiveContainer width="100%" height={alto}>
-        <LineChart data={datos} margin={{ top: 4, right: 0, bottom: 4, left: 0 }}>
-          <YAxis hide domain={["dataMin - 0.05", "dataMax + 0.05"]} />
-          {minimo != null && <ReferenceLine y={minimo} stroke={c["tinta-2"]} strokeDasharray="3 3" strokeOpacity={0.6} />}
-          <Line dataKey="v" stroke={color ?? c.observado} strokeWidth={1.6} dot={false} isAnimationActive={false} connectNulls />
-        </LineChart>
-      </ResponsiveContainer>
-    </div>
+    <Suspense fallback={<div className="curva" style={{ height: props.alto ?? 44 }} aria-hidden="true" />}>
+      <CurvaGrafico {...props} />
+    </Suspense>
   );
 }
 

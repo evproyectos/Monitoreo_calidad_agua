@@ -54,12 +54,14 @@ frontend/              dashboard en React (Vite + Recharts)
     Sesion.jsx         inicio de sesión, contraseña temporal y después el dashboard
     App.jsx            páginas: #/general, #/sensor/J224, #/alertas/12, #/usuarios (administrador) y #/cuenta
     estado.js          semáforo y alertas activas ordenadas por severidad y antelación
-    componentes/       Encabezado, Tarjetas, AlertasActivas, VistaGeneral, Anticipacion, Fugas,
-                       GraficoRed, MapaCalor, DetalleSensor, Graficos, Alarmas, InicioSesion,
-                       Cuenta, Usuarios, CorreoAlertas, GestionAlertas
+    componentes/       Encabezado, Tarjetas, Curva, AlertasActivas, VistaGeneral, Anticipacion, Fugas,
+                       GraficoRed (y serieRed.js), MapaCalor, DetalleSensor, Graficos, Alarmas,
+                       InicioSesion, Cuenta, Usuarios, CorreoAlertas, GestionAlertas
     api.js             consultas periódicas al backend y aviso cuando vence la sesión
     formato.js         etiquetas, norma, tolerancias, formato de números y fechas
     estilos.css        colores (modo claro y oscuro), tipografía y diseño
+  index.html           pide la sesión y los primeros datos mientras baja el JavaScript (RNF-001)
+  medir-lcp.mjs        LCP del dashboard con red Fast 3G (RNF-001)
 registros/             CSV de cada sesión del motor y accesos rechazados (no se versiona)
 .env.ejemplo          variables de configuración y secretos; se copia como .env (no se versiona)
 secretos/             certificado de HTTPS (no se versiona)
@@ -209,6 +211,40 @@ locust -f carga/locustfile.py --host https://127.0.0.1:8001 --headless -u 10 -r 
 ```
 
 Con el servicio en HTTP (sin certificado) el `--host` es `http://127.0.0.1:8001`.
+
+**Carga del dashboard en Fast 3G (RNF-001, LCP ≤ 2,5 s).** `frontend/medir-lcp.mjs` abre con el
+caché vacío la pantalla de inicio de sesión y, con sesión, la vista general y el detalle de un
+sensor, con la red Fast 3G de Chrome DevTools (562,5 ms de latencia, 1,44 Mbit/s de bajada) y el
+procesador 4 veces más lento, y lee el Largest Contentful Paint que da el navegador (5 veces cada
+una). El resultado queda en `docs/rendimiento/lcp.json` (y `lcp-movil.json` con `MOVIL=1`):
+
+```
+cd frontend
+npm install
+npx playwright install chromium
+$env:CORREO_LCP="<correo de un usuario del dashboard>"; $env:CONTRASENA_LCP="<su contraseña>"
+npm run lcp
+```
+
+| Página | Antes | Ahora (mediana · máximo) | Transferido antes → ahora |
+|---|---|---|---|
+| Inicio de sesión | 5,9 s | 1,9 s · 1,9 s | 784 KB → 145 KB |
+| Vista general | 6,7 s | 2,0 s · 2,1 s | 1036 KB → 327 KB |
+| Detalle de un sensor | 6,6 s | 2,0 s · 2,0 s | 1132 KB → 342 KB |
+
+(13/11/2026, servicio local con 10 días del periodo de prueba, pantalla de 1366 × 768; en teléfono,
+1,9 s en las tres.) Lo que cambió:
+
+- **Compresión**: el servicio manda el dashboard y las respuestas JSON con gzip (`GZipMiddleware`);
+  el JavaScript inicial pasó de 678 KB a 81 KB transferidos. Los archivos de `assets/` llevan un hash
+  en el nombre y se guardan en el navegador por un año; `index.html`, nunca.
+- **Lo primero, primero**: la pantalla de inicio de sesión y la vista general vienen en el archivo
+  inicial; los gráficos (Recharts, unos 115 KB), el detalle de un sensor, Usuarios, Alertas y Mi
+  cuenta se cargan cuando hacen falta, y mientras tanto queda su espacio para que la página no salte.
+- **Los datos no esperan al JavaScript**: `index.html` pide la sesión y los datos de la primera
+  pantalla mientras baja el JavaScript (`api.js` usa esas respuestas una sola vez y en los primeros
+  15 s; sin sesión las descarta).
+- **Letra**: solo el alfabeto latino de Manrope (con tildes y ñ); el CSS pasó de 66 KB a 32 KB.
 
 Las predicciones a pedido se atienden en procesos aparte (`monitoreo/trabajadores.py`), cada uno
 con su copia de los modelos: en un solo proceso las solicitudes hacen fila (Python ejecuta de a un

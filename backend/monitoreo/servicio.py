@@ -37,6 +37,7 @@ import pandas as pd
 from fastapi import Depends, FastAPI, HTTPException, Request, Response
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -570,6 +571,19 @@ def crear_app(cfg=None):
     # en desarrollo el dashboard corre en el servidor de Vite (puerto 5173)
     app.add_middleware(CORSMiddleware, allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
                        allow_methods=["GET"], allow_headers=["*"])
+    # RNF-001 (LCP ≤ 2,5 s en Fast 3G): el dashboard y las respuestas JSON van comprimidos (el
+    # JavaScript pasa de ~230 KB a ~75 KB), y los archivos de assets/, que llevan un hash en el
+    # nombre, se guardan en el navegador por un año: cambian de nombre cuando cambian.
+    app.add_middleware(GZipMiddleware, minimum_size=1000)
+
+    @app.middleware("http")
+    async def guardar_assets(request: Request, call_next):
+        r = await call_next(request)
+        if request.url.path.startswith("/assets/") and r.status_code == 200:
+            r.headers["Cache-Control"] = "public, max-age=31536000, immutable"
+        elif request.url.path == "/":
+            r.headers["Cache-Control"] = "no-cache"          # index.html: siempre la versión nueva
+        return r
 
     # errores de validación en español y con la ubicación del campo (RF-003.1, RNF-010)
     MENSAJES = {"missing": "falta este campo", "float_parsing": "debe ser un número o null",

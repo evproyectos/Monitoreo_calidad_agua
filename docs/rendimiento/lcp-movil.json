@@ -1,0 +1,100 @@
+{
+  "url": "http://127.0.0.1:8001",
+  "fecha": "2026-11-14T02:11:36.927Z",
+  "pantalla": "teléfono 390 × 844",
+  "red": "Fast 3G (562,5 ms, 1,44 Mbit/s bajada, 675 kbit/s subida)",
+  "cpu": "4 veces más lento",
+  "meta_ms": 2500,
+  "paginas": [
+    {
+      "pagina": "Inicio de sesión",
+      "ruta": "/",
+      "lcp_ms": [
+        1868,
+        1892,
+        1900,
+        1904,
+        1908
+      ],
+      "lcp_mediana_ms": 1900,
+      "lcp_max_ms": 1908,
+      "cumple": true,
+      "elemento_lcp": "P",
+      "fcp_ms": [
+        1740,
+        1740,
+        1740,
+        1736,
+        1740
+      ],
+      "datos_en_pantalla_ms": [
+        null,
+        null,
+        null,
+        null,
+        null
+      ],
+      "kb_transferidos": 145
+    },
+    {
+      "pagina": "Vista general",
+      "ruta": "#/general",
+      "lcp_ms": [
+        1876,
+        1888,
+        1892,
+        1892,
+        1896
+      ],
+      "lcp_mediana_ms": 1892,
+      "lcp_max_ms": 1896,
+      "cumple": true,
+      "elemento_lcp": "H1",
+      "fcp_ms": [
+        1732,
+        1752,
+        1784,
+        1732,
+        1732
+      ],
+      "datos_en_pantalla_ms": [
+        1962,
+        1943,
+        1953,
+        1956,
+        1934
+      ],
+      "kb_transferidos": 327
+    },
+    {
+      "pagina": "Detalle de un sensor",
+      "ruta": "#/sensor/J224",
+      "lcp_ms": [
+        1856,
+        1860,
+        1876,
+        1876,
+        1892
+      ],
+      "lcp_mediana_ms": 1876,
+      "lcp_max_ms": 1892,
+      "cumple": true,
+      "elemento_lcp": "H1",
+      "fcp_ms": [
+        1736,
+        1732,
+        1744,
+        1732,
+        1756
+      ],
+      "datos_en_pantalla_ms": [
+        1919,
+        1936,
+        1918,
+        1923,
+        2002
+      ],
+      "kb_transferidos": 342
+    }
+  ]
+}

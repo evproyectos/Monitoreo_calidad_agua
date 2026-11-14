@@ -17,20 +17,42 @@ export class ErrorApi extends Error {
   }
 }
 
+// La respuesta que index.html ya pidió para esta ruta (RNF-001), una sola vez y solo en los
+// primeros 15 s; null si no hay.
+function precargada(ruta) {
+  const p = window.__precarga;
+  if (!p || Date.now() - p.t > 15000) return null;
+  const r = p.r[ruta];
+  delete p.r[ruta];
+  return r ?? null;
+}
+
+// Sin sesión (o con la contraseña temporal) lo demás que se pidió por adelantado no sirve: después
+// de entrar se pide de nuevo.
+export function descartarPrecarga() {
+  window.__precarga = null;
+}
+
 // GET, POST, PATCH o DELETE con JSON. Lanza ErrorApi con el mensaje del servidor.
 export async function pedir(ruta, { metodo = "GET", cuerpo } = {}) {
-  const r = await fetch(ruta, {
-    method: metodo,
-    credentials: "same-origin",
-    headers: cuerpo ? { "Content-Type": "application/json" } : undefined,
-    body: cuerpo ? JSON.stringify(cuerpo) : undefined,
-  });
-  let datos = null;
-  try { datos = await r.json(); } catch { datos = null; }
-  if (!r.ok) {
-    if (ruta !== "/api/sesion") avisarSesion(r.status, datos);
+  const previa = metodo === "GET" ? precargada(ruta) : null;
+  let ok, status, datos;
+  if (previa) {
+    ({ ok, status, d: datos } = await previa);
+  } else {
+    const r = await fetch(ruta, {
+      method: metodo,
+      credentials: "same-origin",
+      headers: cuerpo ? { "Content-Type": "application/json" } : undefined,
+      body: cuerpo ? JSON.stringify(cuerpo) : undefined,
+    });
+    ({ ok, status } = r);
+    try { datos = await r.json(); } catch { datos = null; }
+  }
+  if (!ok) {
+    if (ruta !== "/api/sesion") avisarSesion(status, datos);
     const d = datos?.detail;
-    throw new ErrorApi(r.status, (typeof d === "string" ? d : d?.error) ?? `Error ${r.status}`);
+    throw new ErrorApi(status, (typeof d === "string" ? d : d?.error) ?? `Error ${status}`);
   }
   return datos;
 }

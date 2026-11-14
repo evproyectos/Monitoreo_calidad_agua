@@ -4,11 +4,11 @@
  * alertas activas por severidad y antelación, probabilidad a 24 y 48 h y riesgo de fuga por tramo.
  * Los colores de estado siempre van con texto.
  */
-@import "@fontsource/manrope/400.css";
-@import "@fontsource/manrope/500.css";
-@import "@fontsource/manrope/600.css";
-@import "@fontsource/manrope/700.css";
-@import "@fontsource/manrope/800.css";
+@import "@fontsource/manrope/latin-400.css";   /* solo el alfabeto latino (con tildes y ñ): RNF-001 */
+@import "@fontsource/manrope/latin-500.css";
+@import "@fontsource/manrope/latin-600.css";
+@import "@fontsource/manrope/latin-700.css";
+@import "@fontsource/manrope/latin-800.css";
 
 :root {
   color-scheme: light;

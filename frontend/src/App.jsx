@@ -1,15 +1,19 @@
-import { useEffect, useState } from "react";
+import { lazy, Suspense, useEffect, useState } from "react";
 import { useConsulta } from "./api.js";
 import Encabezado from "./componentes/Encabezado.jsx";
 import Tarjetas from "./componentes/Tarjetas.jsx";
-import DetalleSensor from "./componentes/DetalleSensor.jsx";
 import Alarmas from "./componentes/Alarmas.jsx";
 import AlertasActivas from "./componentes/AlertasActivas.jsx";
 import VistaGeneral, { HORAS } from "./componentes/VistaGeneral.jsx";
-import Usuarios from "./componentes/Usuarios.jsx";
-import Cuenta from "./componentes/Cuenta.jsx";
-import GestionAlertas from "./componentes/GestionAlertas.jsx";
 import { alertasActivas, resumenRed } from "./estado.js";
+
+// Las vistas que no se abren al entrar se cargan cuando se piden (RNF-001: la primera carga en
+// Fast 3G trae solo la vista general; los gráficos llegan después).
+const DetalleSensor = lazy(() => import("./componentes/DetalleSensor.jsx"));
+const Usuarios = lazy(() => import("./componentes/Usuarios.jsx"));
+const Cuenta = lazy(() => import("./componentes/Cuenta.jsx"));
+const GestionAlertas = lazy(() => import("./componentes/GestionAlertas.jsx"));
+const cargando = <p className="vacio">Cargando…</p>;
 
 // La vista vive en la dirección (#/general, #/fugas, #/sensor/J224 o #/alertas/12): así funcionan
 // el botón de atrás del navegador y los enlaces directos a un sensor o a una alerta (los del correo).
@@ -82,15 +86,17 @@ export default function App({ sesion, onSalir, onActualizar }) {
         </p>
       )}
 
-      {vista === "usuarios" && <div className="cuerpo-admin"><Usuarios yo={sesion.usuario} /></div>}
-      {vista === "alertas" && (
-        <div className="cuerpo-admin">
-          <GestionAlertas id={ruta.alerta} sesion={sesion} nodos={lista.map((s) => s.nodo)} indicadores={indicadores} />
-        </div>
-      )}
-      {vista === "cuenta" && (
-        <div className="cuerpo-admin"><Cuenta usuario={sesion.usuario} onListo={onActualizar} /></div>
-      )}
+      <Suspense fallback={cargando}>
+        {vista === "usuarios" && <div className="cuerpo-admin"><Usuarios yo={sesion.usuario} /></div>}
+        {vista === "alertas" && (
+          <div className="cuerpo-admin">
+            <GestionAlertas id={ruta.alerta} sesion={sesion} nodos={lista.map((s) => s.nodo)} indicadores={indicadores} />
+          </div>
+        )}
+        {vista === "cuenta" && (
+          <div className="cuerpo-admin"><Cuenta usuario={sesion.usuario} onListo={onActualizar} /></div>
+        )}
+      </Suspense>
 
       {lista.length > 0 && (vista === "general" || vista === "sensor") && (
         <Tarjetas sensores={lista} red={red.datos} norma={norma} fugas={fugas.datos} estado={estado.datos}
@@ -107,7 +113,9 @@ export default function App({ sesion, onSalir, onActualizar }) {
 
       {lista.length > 0 && vista === "sensor" && (
         <div className="cuerpo">
-          <DetalleSensor sensor={sensor} referencias={referencias.datos} />
+          <Suspense fallback={<section className="panel">{cargando}</section>}>
+            <DetalleSensor sensor={sensor} referencias={referencias.datos} />
+          </Suspense>
           {lateral}
         </div>
       )}

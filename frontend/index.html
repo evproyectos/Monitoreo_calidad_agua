@@ -7,6 +7,18 @@
   </head>
   <body>
     <div id="raiz"></div>
+    <script>
+      // RNF-001 (LCP ≤ 2,5 s en Fast 3G): la sesión y los datos de la primera pantalla se piden
+      // aquí, mientras baja el JavaScript, en vez de esperar a que arranque. api.js usa estas
+      // respuestas una sola vez y solo en los primeros segundos; si no hay sesión, las descarta.
+      window.__precarga = { t: Date.now(), r: {} };
+      ["/api/sesion", "/api/estado", "/api/sensores", "/api/referencias", "/api/alarmas", "/api/anticipacion",
+       "/api/fugas?horas=168"].forEach(function (ruta) {
+        window.__precarga.r[ruta] = fetch(ruta, { credentials: "same-origin" }).then(function (r) {
+          return r.json().catch(function () { return null; }).then(function (d) { return { ok: r.ok, status: r.status, d: d }; });
+        });
+      });
+    </script>
     <script type="module" src="/src/main.jsx"></script>
   </body>
 </html>

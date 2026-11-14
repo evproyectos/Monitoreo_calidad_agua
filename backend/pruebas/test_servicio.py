@@ -188,3 +188,19 @@ def test_modelos_nuevos_se_cargan_sin_reiniciar(tmp_path, monkeypatch):
 
 def test_deriva_sin_referencia(cliente):
     assert cliente.get("/api/deriva").json() == {"disponible": False}
+
+
+def test_respuestas_comprimidas_y_assets_en_cache(cliente, tmp_path, monkeypatch):
+    """RNF-001: JSON y dashboard con gzip; los assets (con hash en el nombre) se guardan un año."""
+    r = cliente.get("/api/red/series", params={"horas": 6}, headers={"Accept-Encoding": "gzip"})
+    assert r.headers["content-encoding"] == "gzip" and r.json()["sensores"]
+    dist = tmp_path / "dist"
+    (dist / "assets").mkdir(parents=True)
+    (dist / "index.html").write_text("<!doctype html><div id='raiz'></div>")
+    (dist / "assets" / "index-abc123.js").write_text("console.log('x');" * 200)
+    monkeypatch.setattr(srv, "DIST", dist)
+    c = TestClient(srv.crear_app(configuracion(tmp_path)))              # sin el ciclo: solo archivos
+    a = c.get("/assets/index-abc123.js", headers={"Accept-Encoding": "gzip"})
+    assert a.headers["cache-control"] == "public, max-age=31536000, immutable"
+    assert a.headers["content-encoding"] == "gzip"
+    assert c.get("/").headers["cache-control"] == "no-cache"
