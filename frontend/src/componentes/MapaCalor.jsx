@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useColores } from "../colores.js";
-import { etiquetaEje, fechaHora, fueraDeNorma, numero, PARAMETROS } from "../formato.js";
+import { fechaDia, fechaHora, fueraDeNorma, numero, PARAMETROS } from "../formato.js";
 import { estadoSensor, TEXTO_ESTADO, COLOR_ESTADO } from "./RedSensores.jsx";
 
 // Escala de un solo tono (azul): claro = poco, oscuro = mucho. En modo oscuro se invierte para
@@ -60,7 +60,7 @@ export default function MapaCalor({ red, par, sensores, norma, onAbrir }) {
         <div className="mapa-rejilla" style={{ gridTemplateColumns: plantilla }} onMouseMove={mover} onMouseLeave={() => setPunta(null)}>
           {/* encabezado: tramo observado y tramo pronosticado */}
           <span className="mapa-tramo" style={{ gridRow: 1, gridColumn: `2 / span ${pasado.length}` }}>Observado<span className="largo">, últimos {Math.round(pasado.length / 24)} días</span></span>
-          <span className="mapa-tramo pron" style={{ gridRow: 1, gridColumn: `${pasado.length + 3} / span ${futuro.length}` }}>Pronóstico<span className="largo">, 24 h</span></span>
+          <span className="mapa-tramo pron" style={{ gridRow: 1, gridColumn: `${pasado.length + 3} / span ${futuro.length}` }}><span className="pron-largo">Pronóstico<span className="largo">, 24 h</span></span><span className="pron-corto">24 h</span></span>
 
           {orden.map((s, k) => {
             const est = estadoSensor(s, norma);
@@ -81,8 +81,11 @@ export default function MapaCalor({ red, par, sensores, norma, onAbrir }) {
           <span className="mapa-ahora" style={{ gridColumn: pasado.length + 2, gridRow: `2 / span ${orden.length}` }} />
 
           {/* eje de tiempo: una marca por medianoche */}
-          {medianoches.map((i) => (
-            <span key={`m-${i}`} className="mapa-eje" style={{ gridRow: orden.length + 2, gridColumn: `${columna(i)} / span ${Math.min(12, total - columna(i) + 1)}` }}>{etiquetaEje(red.fechas[i])}</span>
+          {/* en el teléfono: día y mes, un día sí y otro no (si no, las fechas se montan) */}
+          {medianoches.map((i, k) => (
+            <span key={`m-${i}`} className={`mapa-eje${k % 2 ? " impar" : ""}`} style={{ gridRow: orden.length + 2, gridColumn: `${columna(i)} / span ${Math.min(12, total - columna(i) + 1)}` }}>
+              {fechaDia(red.fechas[i]).slice(0, 5)}<span className="anio">{fechaDia(red.fechas[i]).slice(5)}</span>
+            </span>
           ))}
         </div>
       </div>

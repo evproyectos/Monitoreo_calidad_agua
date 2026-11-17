@@ -3,17 +3,22 @@ import { NIVELES } from "../estado.js";
 // Alertas activas ordenadas por severidad (crítica primero) y antelación (RF-003.2 c).
 const ANTELACION = { 0: "Ahora", 24: "En 24 h", 48: "En 48 h" };
 
-export default function AlertasActivas({ alertas, onAbrir, pendientes }) {
+// El contador toma el color de la más grave: rojo solo si hay una crítica; las "habituales" no son
+// eventos nuevos y van en gris. El enlace de abajo es otra cosa: las alertas registradas que alguien
+// tiene que atender y cerrar (el mismo número que la insignia de "Alertas" en el menú).
+export default function AlertasActivas({ alertas, onAbrir, sinAtender = 0, enAtencion = 0, desactualizado }) {
+  const peor = alertas[0]?.nivel ?? "cero";
+  const atender = [sinAtender > 0 && `${sinAtender} sin atender`, enAtencion > 0 && `${enAtencion} en atención`]
+    .filter(Boolean).join(" y ");
   return (
     <section className="panel alertas-activas" aria-label="Alertas activas">
       <div className="panel-cabeza">
         <h2>Alertas activas</h2>
-        <span className={`contador${alertas.length ? "" : " cero"}`}>{alertas.length}</span>
+        <span className={`contador nivel-${peor}`} aria-label={`${alertas.length} activas ahora`}>{alertas.length}</span>
       </div>
-      {pendientes > 0 && (
-        <a className="ir-gestion" href="#/alertas">
-          {pendientes === 1 ? "1 alerta por atender" : `${pendientes} alertas por atender`} →
-        </a>
+      {desactualizado && <p className="mensaje info">{desactualizado}: la lista puede no estar al día.</p>}
+      {atender && (
+        <a className="ir-gestion" href="#/alertas">Registro de alertas: {atender} →</a>
       )}
       {!alertas.length ? (
         <p className="vacio">

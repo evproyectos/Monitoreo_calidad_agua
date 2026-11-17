@@ -18,21 +18,24 @@ function Curva(props) {
   );
 }
 
-function Semaforo({ nivel }) {
+function Semaforo({ nivel, texto }) {
   const n = NIVELES[nivel];
-  return <span className={`pastilla nivel-${nivel}`} title={n.texto}><i aria-hidden="true" />{n.corto ?? n.texto}</span>;
+  return <span className={`pastilla nivel-${nivel}`} title={texto ?? n.texto}><i aria-hidden="true" />{texto ?? n.corto ?? n.texto}</span>;
 }
 
-function TarjetaSensor({ s, red, norma, elegido, onAbrir, posicion }) {
-  const nivel = nivelSensor(s, norma);
+// Sin conexión o sin datos nuevos, la tarjeta queda en gris con el último valor atenuado: lo último
+// que llegó no dice si el agua está bien ahora.
+function TarjetaSensor({ s, red, norma, elegido, onAbrir, posicion, desactualizado }) {
+  const nivel = desactualizado ? "gris" : nivelSensor(s, norma);
   const serie = red?.sensores?.[s.nodo]?.CL2 ?? [];
   const pasado = red?.fechas ? serie.filter((_, i) => red.fechas[i] <= red.ahora) : [];
   return (
-    <button className={`tarjeta nivel-${nivel}${elegido ? " elegida" : ""}`} onClick={() => onAbrir(s.nodo)}
-            aria-pressed={elegido} aria-label={`Sensor ${s.nodo}, ${NIVELES[nivel].texto}. Abrir su detalle`}>
+    <button className={`tarjeta nivel-${nivel}${elegido ? " elegida" : ""}${desactualizado ? " desactualizada" : ""}`}
+            onClick={() => onAbrir(s.nodo)} aria-pressed={elegido}
+            aria-label={`Sensor ${s.nodo}, ${desactualizado ?? NIVELES[nivel].texto}. Abrir su detalle`}>
       <span className="tarjeta-cabeza">
         <span className="nodo">{s.nodo}<small>{posicion}</small></span>
-        <Semaforo nivel={nivel} />
+        <Semaforo nivel={nivel} texto={desactualizado} />
       </span>
       <span className="principal">
         <span className="etq">Cloro libre</span>
@@ -55,16 +58,16 @@ function TarjetaSensor({ s, red, norma, elegido, onAbrir, posicion }) {
   );
 }
 
-function TarjetaFugas({ fugas, estado }) {
+function TarjetaFugas({ fugas, estado, desactualizado }) {
   const c = useColores();
   if (!fugas?.disponible || !fugas.actual) return null;
   const a = fugas.actual;
-  const nivel = estado?.fuga_activa ? "rojo" : a.probabilidad >= a.umbral ? "amarillo" : "verde";
+  const nivel = desactualizado ? "gris" : estado?.fuga_activa ? "rojo" : a.probabilidad >= a.umbral ? "amarillo" : "verde";
   return (
-    <a className={`tarjeta tarjeta-fugas nivel-${nivel}`} href="#/fugas">
+    <a className={`tarjeta tarjeta-fugas nivel-${nivel}${desactualizado ? " desactualizada" : ""}`} href="#/fugas">
       <span className="tarjeta-cabeza">
         <span className="nodo">Fugas<small>Caudal de la fuente</small></span>
-        <Semaforo nivel={nivel} />
+        <Semaforo nivel={nivel} texto={desactualizado} />
       </span>
       <span className="principal">
         <span className="etq">Probabilidad de fuga</span>
@@ -79,16 +82,16 @@ function TarjetaFugas({ fugas, estado }) {
   );
 }
 
-export default function Tarjetas({ sensores, red, norma, fugas, estado, elegido, onAbrir }) {
+export default function Tarjetas({ sensores, red, norma, fugas, estado, elegido, onAbrir, desactualizado }) {
   const orden = ordenRed(sensores);
   const posicion = (i) => (i === 0 ? "Cerca de la fuente" : i === orden.length - 1 ? "Extremo de la red" : "Intermedio");
   return (
     <section className="tarjetas" aria-label="Puntos de medición, de la fuente al extremo de la red">
       {orden.map((s, i) => (
         <TarjetaSensor key={s.nodo} s={s} red={red} norma={norma} elegido={s.nodo === elegido} onAbrir={onAbrir}
-                       posicion={posicion(i)} />
+                       posicion={posicion(i)} desactualizado={desactualizado} />
       ))}
-      <TarjetaFugas fugas={fugas} estado={estado} />
+      <TarjetaFugas fugas={fugas} estado={estado} desactualizado={desactualizado} />
     </section>
   );
 }

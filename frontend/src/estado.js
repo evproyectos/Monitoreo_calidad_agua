@@ -6,7 +6,7 @@
 // está, como el cloro bajo al final de la red). Se muestra en su tarjeta y en la lista, pero no
 // pone la red en rojo: si no, el semáforo quedaría en rojo siempre y taparía los eventos reales.
 // Si en ese punto hay además una alarma del detector, sí es rojo.
-import { enFrase, fueraDeNorma, PARAMETROS, TIPOS } from "./formato.js";
+import { enFrase, fueraDeNorma, numero, PARAMETROS, TIPOS } from "./formato.js";
 
 export const NIVELES = {
   rojo: { texto: "Alerta crítica", orden: 0 },
@@ -65,8 +65,9 @@ export function alertasActivas({ estado, sensores, norma, anticipacion, fugas })
   sensores.forEach((s) => PARS.forEach((p) => {
     if (fueraDeNorma(p, s[p], norma) && habitual(s, p, norma)) {
       const t = s.tipicos?.[p] ?? s.cloro_tipico;
+      const u = PARAMETROS[p].unidad ? ` ${PARAMETROS[p].unidad}` : "";
       out.push({ nivel: "habitual", antelacion_h: 0, sensor: s.nodo, titulo: `${problema(p, s[p], norma[p])} habitual en ${s.nodo}`,
-                 detalle: `En este punto ${PARAMETROS[p].nombre.toLowerCase()} está fuera de la norma casi siempre (típico ${t}): `
+                 detalle: `En este punto ${PARAMETROS[p].nombre.toLowerCase()} está fuera de la norma casi siempre (típico ${numero(t, PARAMETROS[p].decimales)}${u}): `
                    + "no es un evento nuevo, pero conviene revisar ese sector (por ejemplo, la cloración)." });
     } else if (fueraDeNorma(p, s[p], norma)) {
       out.push({ nivel: "rojo", antelacion_h: 0, sensor: s.nodo, titulo: `${problema(p, s[p], norma[p])} en ${s.nodo}`,

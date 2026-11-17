@@ -58,8 +58,13 @@ export default function CorreoAlertas({ consulta, yo }) {
             <div className="sin-configurar">
               <dt>Cómo activarlo</dt>
               <dd>
-                En el archivo <code>.env</code> del servicio, completa <code>SMTP_SERVIDOR</code>, <code>SMTP_USUARIO</code> y{" "}
-                <code>SMTP_CONTRASENA</code>, y reinicia el servicio. Los pasos para Gmail están en el README.
+                Los correos todavía no están activados. Pídale al encargado del sistema que configure la cuenta de
+                correo que los envía.
+                <details className="para-encargado">
+                  <summary>Datos para el encargado del sistema</summary>
+                  En el archivo <code>.env</code> del servicio, completar <code>SMTP_SERVIDOR</code>, <code>SMTP_USUARIO</code> y{" "}
+                  <code>SMTP_CONTRASENA</code>, y reiniciar el servicio. Los pasos para Gmail están en el README.
+                </details>
               </dd>
             </div>
           )}

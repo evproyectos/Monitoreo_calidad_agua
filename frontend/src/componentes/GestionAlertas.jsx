@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { pedir, useConsulta } from "../api.js";
-import { fechaHora, TIPOS } from "../formato.js";
+import { fechaHora, horasEntre, TIPOS } from "../formato.js";
 
 // Gestión de alertas (CU-06): lista filtrable por estado, tipo, nodo y fecha; el detalle con lo que
 // hay que saber para actuar; reconocerla, anotar lo que se hizo en campo y cerrarla con su resultado.
@@ -151,7 +151,37 @@ function Fila({ a, elegida }) {
   );
 }
 
-function Detalle({ id, yo, puede, onCambio }) {
+// "5 h", "1 día y 3 h"
+function duracion(inicio, fin) {
+  const h = horasEntre(inicio, fin) + 1;              // las horas con el evento, la última incluida
+  if (h < 24) return `${h} h`;
+  const d = Math.floor(h / 24);
+  return `${d} día${d > 1 ? "s" : ""}${h % 24 ? ` y ${h % 24} h` : ""}`;
+}
+
+// Sin alerta elegida: en vez de un panel vacío, cuántas hay por atender y la más reciente.
+function SinElegir({ filas }) {
+  const nuevas = filas.filter((a) => a.estado === "nueva");
+  const primera = nuevas[0] ?? filas[0];
+  return (
+    <section className="panel detalle-alerta vacia">
+      {primera ? (
+        <div className="sin-elegir">
+          <p className="nota">{nuevas.length ? `${nuevas.length === 1 ? "1 alerta" : `${nuevas.length} alertas`} sin atender. La más reciente:` : "La más reciente de la lista:"}</p>
+          <a className={`lista-gestion-alertas-una nivel-${primera.nivel}`} href={`#/alertas/${primera.id}`}>
+            <b>{primera.titulo}</b>
+            <span>{primera.tipo_nombre} · {primera.lugar ?? "Toda la red"} · {fechaHora(primera.inicio)}</span>
+          </a>
+          <p className="nota">O elige otra de la lista para ver su detalle y atenderla.</p>
+        </div>
+      ) : (
+        <p className="vacio">No hay alertas en la lista. Cuando el sistema detecte o anticipe un evento, aparece aquí.</p>
+      )}
+    </section>
+  );
+}
+
+function Detalle({ id, yo, puede, onCambio, filas }) {
   const consulta = useConsulta(id ? `/api/alertas/${id}` : null, 10000);
   const [nota, setNota] = useState("");
   const [cierre, setCierre] = useState({ resultado: "", observaciones: "" });
@@ -160,7 +190,7 @@ function Detalle({ id, yo, puede, onCambio }) {
   useEffect(() => { setNota(""); setCierre({ resultado: "", observaciones: "" }); setMsj(null); }, [id]);
 
   const a = consulta.datos;
-  if (!id) return <section className="panel detalle-alerta vacia"><p className="vacio">Elige una alerta de la lista para ver el detalle y atenderla.</p></section>;
+  if (!id) return <SinElegir filas={filas} />;
   if (consulta.error?.status === 404) return <section className="panel detalle-alerta"><p className="vacio">Esa alerta no existe.</p></section>;
   if (!a) return <section className="panel detalle-alerta"><p className="vacio">Cargando…</p></section>;
 
@@ -197,8 +227,14 @@ function Detalle({ id, yo, puede, onCambio }) {
         <div><dt>Tipo</dt><dd>{a.tipo_nombre}{a.evento && EVENTO[a.evento] && a.tipo !== "fuga" ? ` · ${EVENTO[a.evento]}` : ""}</dd></div>
         <div><dt>Dónde</dt><dd>{a.lugar ?? "Toda la red"}</dd></div>
         <div><dt>Probabilidad</dt><dd>{pct(a.probabilidad)}</dd></div>
-        <div><dt>Antelación</dt><dd>{a.antelacion_h ? `${a.antelacion_h} h antes` : "Ya está ocurriendo"}</dd></div>
+        {/* si ya terminó, cuánto duró; si sigue, desde cuándo o con cuánta antelación se avisó */}
+        {a.activa || !a.fin ? (
+          <div><dt>Antelación</dt><dd>{a.antelacion_h ? `${a.antelacion_h} h antes` : "Está ocurriendo"}</dd></div>
+        ) : (
+          <div><dt>Duró</dt><dd>{duracion(a.inicio, a.fin)}</dd></div>
+        )}
         <div><dt>Desde</dt><dd>{fechaHora(a.inicio)}</dd></div>
+        {!a.activa && a.fin && <div><dt>Hasta</dt><dd>{fechaHora(a.fin)}</dd></div>}
         <div><dt>Responsable</dt><dd>{a.responsable_nombre ?? "Nadie todavía"}</dd></div>
       </dl>
       {a.parametros && <p className="parametros"><b>Lecturas:</b> {a.parametros}.</p>}
@@ -295,7 +331,6 @@ export default function GestionAlertas({ id, sesion, nodos, indicadores }) {
           </div>
         </div>
         <Indicadores datos={indicadores.datos} />
-        <Rendimiento puede={sesion.permisos.atender_alertas} />
         <div className="filtros filtros-alertas">
           <label className="campo"><span>Estado</span>
             <select value={f.estado} onChange={cambiar("estado")}>
@@ -331,8 +366,10 @@ export default function GestionAlertas({ id, sesion, nodos, indicadores }) {
         <ul className="lista-gestion-alertas">
           {filas.map((a) => <Fila key={a.id} a={a} elegida={String(a.id) === String(id)} />)}
         </ul>
+        {/* el F1 le sirve a quien evalúa el sistema: va después de la lista, que es lo que se viene a ver */}
+        <Rendimiento puede={sesion.permisos.atender_alertas} />
       </section>
-      <Detalle id={id} yo={sesion.usuario} puede={sesion.permisos.atender_alertas}
+      <Detalle id={id} yo={sesion.usuario} puede={sesion.permisos.atender_alertas} filas={filas}
                onCambio={() => { lista.recargar(); indicadores.recargar(); }} />
     </div>
   );

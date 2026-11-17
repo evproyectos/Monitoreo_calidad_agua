@@ -56,20 +56,29 @@ export default function App({ sesion, onSalir, onActualizar }) {
     : null;
   useEffect(() => { if (nodo) setUltimoSensor(nodo); }, [nodo]);
   const sensor = lista.find((s) => s.nodo === nodo);
+  // al abrir otro sensor, su detalle queda arriba: se vuelve al principio de la página
+  useEffect(() => { if (nodo) window.scrollTo({ top: 0, behavior: "smooth" }); }, [nodo]);
   useEffect(() => {
     if (ruta.fugas) document.getElementById("fugas")?.scrollIntoView({ behavior: "smooth" });
   }, [ruta.fugas, lista.length]);
 
   // sin conexión = la red falló o el servicio respondió con un error suyo (no un 401 o 403)
   const sinServicio = Boolean(estado.error) && !(estado.error.status < 500);
+  // desde cuándo no hay conexión (hora de este equipo), para decirlo en el aviso
+  const [sinServicioDesde, setSinServicioDesde] = useState(null);
+  useEffect(() => { setSinServicioDesde(sinServicio ? (d) => d ?? new Date() : null); }, [sinServicio]);
   const admin = sesion.permisos.gestionar_usuarios && sesion.inicio_sesion;
   const vista = ruta.vista === "usuarios" && !admin ? "general" : ruta.vista;
   const alertas = norma ? alertasActivas({ estado: estado.datos, sensores: lista, norma,
                                            anticipacion: anticipacion.datos, fugas: fugas.datos }) : [];
   const resumen = resumenRed({ sinServicio, estado: estado.datos, sensores: lista, alertas });
+  // sin conexión o sin datos nuevos: lo que se ve es lo último que llegó, y no se puede decir "Normal"
+  const desactualizado = lista.length > 0 && resumen.nivel === "gris"
+    ? (sinServicio ? "Sin conexión" : "Sin datos nuevos") : null;
   const lateral = (
     <aside className="lateral">
-      <AlertasActivas alertas={alertas} onAbrir={abrirSensor} pendientes={indicadores.datos?.pendientes} />
+      <AlertasActivas alertas={alertas} onAbrir={abrirSensor} sinAtender={indicadores.datos?.nuevas}
+                      enAtencion={indicadores.datos?.en_atencion} desactualizado={desactualizado} />
       <Alarmas alarmas={alarmas.datos} confirmarH={referencias.datos?.confirmar_h} onElegir={abrirSensor} />
     </aside>
   );
@@ -80,9 +89,11 @@ export default function App({ sesion, onSalir, onActualizar }) {
                   sensor={nodo ?? ultimoSensor} sesion={sesion} onSalir={onSalir}
                   sinAtender={indicadores.datos?.nuevas ?? 0} />
       {sinServicio && (
-        <p className="aviso">
-          Revisa que el servicio esté corriendo: en la carpeta backend, <code>python -m monitoreo.servicio</code>.
-          Se muestra la última información recibida.
+        <p className="aviso" role="alert">
+          <b>No hay conexión con el servicio de monitoreo</b>
+          {sinServicioDesde && <> desde las {sinServicioDesde.toLocaleTimeString("es-CR", { hour12: false })}</>}.
+          Lo que se ve es lo último que llegó y puede no estar al día. Si sigue así unos minutos, avise al
+          encargado del sistema.
         </p>
       )}
 
@@ -98,25 +109,34 @@ export default function App({ sesion, onSalir, onActualizar }) {
         )}
       </Suspense>
 
-      {lista.length > 0 && (vista === "general" || vista === "sensor") && (
-        <Tarjetas sensores={lista} red={red.datos} norma={norma} fugas={fugas.datos} estado={estado.datos}
-                  elegido={ruta.vista === "sensor" ? nodo : null} onAbrir={abrirSensor} />
-      )}
-
+      {/* Toda la red: tarjetas y debajo los gráficos con las alertas al lado. Un sensor: su detalle
+          arriba y las tarjetas debajo, para pasar a otro. En pantallas angostas las alertas activas
+          suben justo debajo del estado de la red (estilos.css, .tablero). */}
       {lista.length > 0 && vista === "general" && (
-        <div className="cuerpo">
-          <VistaGeneral sensores={lista} referencias={referencias.datos} red={red.datos}
-                        anticipacion={anticipacion.datos} fugas={fugas.datos} onAbrir={abrirSensor} />
-          {lateral}
+        <div className="tablero">
+          <Tarjetas sensores={lista} red={red.datos} norma={norma} fugas={fugas.datos} estado={estado.datos}
+                    elegido={null} onAbrir={abrirSensor} desactualizado={desactualizado} />
+          <div className="cuerpo">
+            <VistaGeneral sensores={lista} referencias={referencias.datos} red={red.datos}
+                          anticipacion={anticipacion.datos} fugas={fugas.datos} onAbrir={abrirSensor} />
+            {lateral}
+          </div>
         </div>
       )}
 
       {lista.length > 0 && vista === "sensor" && (
-        <div className="cuerpo">
-          <Suspense fallback={<section className="panel">{cargando}</section>}>
-            <DetalleSensor sensor={sensor} referencias={referencias.datos} />
-          </Suspense>
-          {lateral}
+        <div className="tablero">
+          <div className="cuerpo">
+            <Suspense fallback={<section className="panel">{cargando}</section>}>
+              <DetalleSensor sensor={sensor} referencias={referencias.datos} />
+            </Suspense>
+            {lateral}
+          </div>
+          <section className="otros-puntos" aria-label="Otros puntos de medición">
+            <h2 className="titulo-seccion">Otros puntos de medición</h2>
+            <Tarjetas sensores={lista} red={red.datos} norma={norma} fugas={fugas.datos} estado={estado.datos}
+                      elegido={nodo} onAbrir={abrirSensor} desactualizado={desactualizado} />
+          </section>
         </div>
       )}
 
