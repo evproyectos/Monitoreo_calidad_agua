@@ -215,7 +215,7 @@ function Detalle({ id, yo, puede, onCambio, filas }) {
 
   return (
     <section className={`panel detalle-alerta nivel-${a.nivel}`} aria-label="Detalle de la alerta">
-      <a href="#/alertas" className="volver">← Todas las alertas</a>
+      <a href="#/alertas" className="volver">Volver a todas las alertas</a>
       <div className="cabeza-alerta">
         <span className={`pastilla nivel-${a.nivel}`}><i />{NIVEL[a.nivel]}</span>
         <span className={`pastilla ${CLASE_ESTADO[a.estado]}`}>{a.estado === "cerrada" ? `Cerrada: ${a.resultado_nombre}` : ESTADOS[a.estado]}</span>

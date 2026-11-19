@@ -18,7 +18,7 @@ export default function AlertasActivas({ alertas, onAbrir, sinAtender = 0, enAte
       </div>
       {desactualizado && <p className="mensaje info">{desactualizado}: la lista puede no estar al día.</p>}
       {atender && (
-        <a className="ir-gestion" href="#/alertas">Registro de alertas: {atender} →</a>
+        <a className="ir-gestion" href="#/alertas">Ver el registro de alertas ({atender})</a>
       )}
       {!alertas.length ? (
         <p className="vacio">

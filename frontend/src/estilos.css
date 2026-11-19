@@ -441,8 +441,8 @@ p.nota { margin: 4px 0 0; }
 
 /* ---------------------------------------------------------------- gestión de alertas (CU-06) */
 .insignia { margin-left: 6px; min-width: 20px; height: 20px; padding: 0 6px; display: inline-grid; place-items: center; border-radius: 999px; background: var(--alarma); color: var(--sobre-alarma); font-size: 11.5px; font-weight: 800; vertical-align: 1px; }
-.ir-gestion { display: inline-block; margin-top: 8px; font-size: 13.5px; font-weight: 700; color: var(--primario); text-decoration: none; }
-.ir-gestion:hover { text-decoration: underline; }
+.ir-gestion { display: inline-block; margin-top: 8px; font-size: 13.5px; font-weight: 700; color: var(--primario); text-decoration: underline; text-underline-offset: 3px; }
+.ir-gestion:hover { text-decoration-thickness: 2px; }
 .gestion { display: grid; grid-template-columns: minmax(340px, 440px) minmax(0, 1fr); gap: 16px; align-items: start; }
 .indicadores { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; margin-top: 14px; }
 .indicadores div { background: var(--superficie-2); border: 1px solid var(--linea); border-radius: 10px; padding: 9px 11px; display: grid; gap: 2px; align-content: start; }
@@ -489,7 +489,7 @@ p.nota { margin: 4px 0 0; }
 .lista-gestion-alertas-una:hover { background: var(--superficie-2); }
 .lista-gestion-alertas-una span { font-size: 13px; color: var(--tinta-2); }
 .lista-gestion .rendimiento { margin-top: 16px; }
-.detalle-alerta .volver { display: none; font-size: 14px; font-weight: 700; color: var(--primario); text-decoration: none; }
+.detalle-alerta .volver { display: none; font-size: 14px; font-weight: 700; color: var(--primario); text-decoration: underline; text-underline-offset: 3px; }
 .cabeza-alerta { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
 .detalle-alerta h2 { font-size: 21px; font-weight: 800; letter-spacing: -0.01em; line-height: 1.25; }
 .datos-alerta { margin: 0; display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px 18px; padding: 12px 14px; background: var(--superficie-2); border-radius: 10px; }
