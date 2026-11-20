@@ -9,6 +9,7 @@ pronosticada para las próximas 24 h (monitoreo.pronostico_lluvia).
 """
 
 import hashlib
+import json
 import os
 import threading
 from datetime import datetime
@@ -77,6 +78,34 @@ def huella(ruta):
             h.update(bloque)
     return {"archivo": os.path.basename(ruta), "sha256": h.hexdigest()[:12],
             "fecha": datetime.fromtimestamp(os.path.getmtime(ruta)).isoformat(timespec="seconds")}
+
+
+# nombre de cada modelo en el Model Registry de MLflow (Modelo_calidad_agua/calidad_agua/registro_modelos.py)
+NOMBRE_REGISTRO = {"pronostico": "pronostico_24h", "detector": "detector_eventos",
+                   "anticipacion": "anticipacion_eventos", "fugas": "fugas"}
+
+
+def con_registro(carpeta, version):
+    """
+    `version` (la huella de cada modelo cargado) con su versión del Model Registry, leída de
+    versiones.json de la carpeta de modelos (lo escribe registrar_modelos.py al reentrenar). Solo
+    se agrega si el archivo cargado es el mismo que se registró (misma huella): justo después de
+    un reentrenamiento, versiones.json puede ser más nuevo que los modelos en memoria.
+    """
+    try:
+        with open(os.path.join(os.fspath(carpeta), "versiones.json"), encoding="utf-8") as f:
+            registro = json.load(f)
+    except (OSError, ValueError):
+        return version
+    salida = {}
+    for clave, v in version.items():
+        r = (registro.get("modelos") or {}).get(NOMBRE_REGISTRO.get(clave, ""))
+        sha = (r or {}).get("archivos", {}).get(v.get("archivo"), "") if isinstance(v, dict) else ""
+        if sha and v.get("sha256") and sha.startswith(v["sha256"]):
+            v = {**v, "registro": {"nombre": NOMBRE_REGISTRO[clave], "version": r.get("version"),
+                                   "alias": registro.get("alias")}}
+        salida[clave] = v
+    return salida
 
 
 class Modelos:

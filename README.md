@@ -54,7 +54,7 @@ frontend/              dashboard en React (Vite + Recharts)
     Sesion.jsx         inicio de sesión, contraseña temporal y después el dashboard
     App.jsx            páginas: #/general, #/sensor/J224, #/alertas/12, #/usuarios (administrador) y #/cuenta
     estado.js          semáforo y alertas activas ordenadas por severidad y antelación
-    componentes/       Encabezado, Tarjetas, Curva, AlertasActivas, VistaGeneral, Anticipacion, Fugas,
+    componentes/       Menu (menú de la izquierda), Encabezado, Tarjetas, Curva, AlertasActivas, VistaGeneral, Anticipacion, Fugas,
                        GraficoRed (y serieRed.js), MapaCalor, DetalleSensor, Graficos, Alarmas,
                        InicioSesion, Cuenta, Usuarios, CorreoAlertas, GestionAlertas
     api.js             consultas periódicas al backend y aviso cuando vence la sesión
@@ -474,7 +474,7 @@ El dashboard pide correo y contraseña (CU-00). Cada usuario tiene un rol:
 ### Gestión de alertas
 
 Cada alarma, posible fuga, aviso anticipado o riesgo en 24 h queda como una **alerta** en la
-página **Alertas** del tablero (CU-06), hasta que alguien la cierre. La pestaña muestra cuántas
+página **Alertas** del tablero (CU-06), hasta que alguien la cierre. El menú muestra cuántas
 faltan por atender, y el botón de cada correo lleva directo a su alerta.
 
 1. **Nueva:** la crea el sistema con el tipo de evento, dónde, la probabilidad, la antelación, las
@@ -524,7 +524,7 @@ base. Se ajusta con `RENDIMIENTO_DIAS` (7), `RENDIMIENTO_F1_MINIMO` (0,75) y
 
 | Ruta | Qué devuelve |
 |---|---|
-| `GET /health` | si el servicio está en pie (`ok` o `degradado` con el motivo), versión, y de cada modelo cargado su huella y la corrida de MLflow que lo generó (`run_id`, experimento y huella de los datos) |
+| `GET /health` | si el servicio está en pie (`ok` o `degradado` con el motivo), versión, y de cada modelo cargado su huella, la corrida de MLflow que lo generó (`run_id`, experimento y huella de los datos) y su versión en el Model Registry (`registro`, de `versiones.json` de la carpeta de modelos) |
 | `POST /predict/contaminacion` | requiere `X-API-Key`. Con las lecturas de 15 min de toda la red de las últimas 98 h (mismo formato que `POST /lecturas` de la API de datos): probabilidad de evento, tipo sugerido, pronóstico a 24 h y nivel verde, amarillo o rojo por sensor y para la red. 422 con el detalle si faltan columnas, lecturas o datos. El nivel amarillo empieza en `UMBRAL_AMARILLO` (0,5 por defecto) |
 | `POST /api/sesion` | inicia sesión con `{"correo", "contrasena"}`; deja la cookie. `GET` dice quién tiene la sesión (401 si nadie) y `DELETE` la cierra |
 | `POST /api/sesion/contrasena` | cambia la contraseña propia: `{"actual", "nueva"}` |
@@ -596,3 +596,15 @@ modo de falla y sus pruebas, está en [docs/arquitectura-resiliencia.md](docs/ar
   aparte. Si no está `fugas.joblib`, el servicio funciona igual sin fugas.
 - **Modo de pronóstico:** `combinado` (árboles para cloro, LSTM para turbidez, promedio
   para pH, como se eligió en el notebook 08) o `arboles` (sin TensorFlow).
+
+## Licencia
+
+Licencia **MIT** (`LICENSE`), Copyright (c) 2026 Emanuel Vargas y ASADA La Lucha: el servicio, el
+dashboard y los scripts se pueden usar, cambiar y redistribuir, también para otras ASADAS,
+manteniendo el aviso de autoría. Los modelos que usa son del proyecto `Modelo_calidad_agua`, con
+la misma licencia. No incluye:
+
+- **Los datos de Open-Meteo** (lluvia observada y pronosticada): CC BY 4.0, por eso el dashboard
+  muestra el crédito al pie.
+- **Las librerías y la fuente tipográfica** (FastAPI, React, Recharts, la fuente Manrope…), que
+  tienen sus propias licencias.

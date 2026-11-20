@@ -1,6 +1,7 @@
 import { lazy, Suspense, useEffect, useState } from "react";
 import { useConsulta } from "./api.js";
 import Encabezado from "./componentes/Encabezado.jsx";
+import Menu from "./componentes/Menu.jsx";
 import Tarjetas from "./componentes/Tarjetas.jsx";
 import Alarmas from "./componentes/Alarmas.jsx";
 import AlertasActivas from "./componentes/AlertasActivas.jsx";
@@ -85,66 +86,69 @@ export default function App({ sesion, onSalir, onActualizar }) {
 
   return (
     <div className="app">
-      <Encabezado resumen={resumen} hora={estado.datos?.ultima_hora_procesada} vista={vista}
-                  sensor={nodo ?? ultimoSensor} sesion={sesion} onSalir={onSalir}
-                  sinAtender={indicadores.datos?.nuevas ?? 0} />
-      {sinServicio && (
-        <p className="aviso" role="alert">
-          <b>No hay conexión con el servicio de monitoreo</b>
-          {sinServicioDesde && <> desde las {sinServicioDesde.toLocaleTimeString("es-CR", { hour12: false })}</>}.
-          Lo que se ve es lo último que llegó y puede no estar al día. Si sigue así unos minutos, avise al
-          encargado del sistema.
-        </p>
-      )}
-
-      <Suspense fallback={cargando}>
-        {vista === "usuarios" && <div className="cuerpo-admin"><Usuarios yo={sesion.usuario} /></div>}
-        {vista === "alertas" && (
-          <div className="cuerpo-admin">
-            <GestionAlertas id={ruta.alerta} sesion={sesion} nodos={lista.map((s) => s.nodo)} indicadores={indicadores} />
-          </div>
+      <Menu vista={vista} sensor={nodo ?? ultimoSensor} sensores={lista} norma={norma}
+            desactualizado={desactualizado} sesion={sesion} onSalir={onSalir}
+            sinAtender={indicadores.datos?.nuevas ?? 0} />
+      <main className="contenido">
+        <Encabezado resumen={resumen} hora={estado.datos?.ultima_hora_procesada} />
+        {sinServicio && (
+          <p className="aviso" role="alert">
+            <b>No hay conexión con el servicio de monitoreo</b>
+            {sinServicioDesde && <> desde las {sinServicioDesde.toLocaleTimeString("es-CR", { hour12: false })}</>}.
+            Lo que se ve es lo último que llegó y puede no estar al día. Si sigue así unos minutos, avise al
+            encargado del sistema.
+          </p>
         )}
-        {vista === "cuenta" && (
-          <div className="cuerpo-admin"><Cuenta usuario={sesion.usuario} onListo={onActualizar} /></div>
-        )}
-      </Suspense>
 
-      {/* Toda la red: tarjetas y debajo los gráficos con las alertas al lado. Un sensor: su detalle
-          arriba y las tarjetas debajo, para pasar a otro. En pantallas angostas las alertas activas
-          suben justo debajo del estado de la red (estilos.css, .tablero). */}
-      {lista.length > 0 && vista === "general" && (
-        <div className="tablero">
-          <Tarjetas sensores={lista} red={red.datos} norma={norma} fugas={fugas.datos} estado={estado.datos}
-                    elegido={null} onAbrir={abrirSensor} desactualizado={desactualizado} />
-          <div className="cuerpo">
-            <VistaGeneral sensores={lista} referencias={referencias.datos} red={red.datos}
-                          anticipacion={anticipacion.datos} fugas={fugas.datos} onAbrir={abrirSensor} />
-            {lateral}
-          </div>
-        </div>
-      )}
+        <Suspense fallback={cargando}>
+          {vista === "usuarios" && <div className="cuerpo-admin"><Usuarios yo={sesion.usuario} /></div>}
+          {vista === "alertas" && (
+            <div className="cuerpo-admin">
+              <GestionAlertas id={ruta.alerta} sesion={sesion} nodos={lista.map((s) => s.nodo)} indicadores={indicadores} />
+            </div>
+          )}
+          {vista === "cuenta" && (
+            <div className="cuerpo-admin"><Cuenta usuario={sesion.usuario} onListo={onActualizar} /></div>
+          )}
+        </Suspense>
 
-      {lista.length > 0 && vista === "sensor" && (
-        <div className="tablero">
-          <div className="cuerpo">
-            <Suspense fallback={<section className="panel">{cargando}</section>}>
-              <DetalleSensor sensor={sensor} referencias={referencias.datos} />
-            </Suspense>
-            {lateral}
-          </div>
-          <section className="otros-puntos" aria-label="Otros puntos de medición">
-            <h2 className="titulo-seccion">Otros puntos de medición</h2>
+        {/* Toda la red: tarjetas y debajo los gráficos con las alertas al lado. Un sensor: su detalle
+            arriba y las tarjetas debajo, para pasar a otro. En pantallas angostas las alertas activas
+            suben justo debajo del estado de la red (estilos.css, .tablero). */}
+        {lista.length > 0 && vista === "general" && (
+          <div className="tablero">
             <Tarjetas sensores={lista} red={red.datos} norma={norma} fugas={fugas.datos} estado={estado.datos}
-                      elegido={nodo} onAbrir={abrirSensor} desactualizado={desactualizado} />
-          </section>
-        </div>
-      )}
+                      elegido={null} onAbrir={abrirSensor} desactualizado={desactualizado} />
+            <div className="cuerpo">
+              <VistaGeneral sensores={lista} referencias={referencias.datos} red={red.datos}
+                            anticipacion={anticipacion.datos} fugas={fugas.datos} onAbrir={abrirSensor} />
+              {lateral}
+            </div>
+          </div>
+        )}
 
-      {/* crédito que pide la licencia CC BY 4.0 de los datos de Open-Meteo (lluvia y pronóstico) */}
-      <footer className="pie-app">
-        Datos meteorológicos: <a href="https://open-meteo.com/" target="_blank" rel="noreferrer">Open-Meteo.com</a>,
-        licencia <a href="https://creativecommons.org/licenses/by/4.0/deed.es" target="_blank" rel="noreferrer">CC BY 4.0</a>
-      </footer>
+        {lista.length > 0 && vista === "sensor" && (
+          <div className="tablero">
+            <div className="cuerpo">
+              <Suspense fallback={<section className="panel">{cargando}</section>}>
+                <DetalleSensor sensor={sensor} referencias={referencias.datos} />
+              </Suspense>
+              {lateral}
+            </div>
+            <section className="otros-puntos" aria-label="Otros puntos de medición">
+              <h2 className="titulo-seccion">Otros puntos de medición</h2>
+              <Tarjetas sensores={lista} red={red.datos} norma={norma} fugas={fugas.datos} estado={estado.datos}
+                        elegido={nodo} onAbrir={abrirSensor} desactualizado={desactualizado} />
+            </section>
+          </div>
+        )}
+
+        {/* crédito que pide la licencia CC BY 4.0 de los datos de Open-Meteo (lluvia y pronóstico) */}
+        <footer className="pie-app">
+          Datos meteorológicos: <a href="https://open-meteo.com/" target="_blank" rel="noreferrer">Open-Meteo.com</a>,
+          licencia <a href="https://creativecommons.org/licenses/by/4.0/deed.es" target="_blank" rel="noreferrer">CC BY 4.0</a>
+        </footer>
+      </main>
     </div>
   );
 }

@@ -1,5 +1,6 @@
 """API del servicio (servicio.py) de punta a punta, con el ciclo real y una API de datos falsa."""
 
+import json
 import time
 
 import pandas as pd
@@ -57,6 +58,19 @@ def test_health_ok_con_version_y_modelos(cliente):
     assert d["modelos"]["detector"]["sha256"] == "bbbbbbbbbbbb" and d["modelos"]["umbral_detector"] == 0.9
     assert d["conectado_a_datos"] is True and d["alertas"] == "consola"
     assert d["ultima_hora_procesada"] == ULTIMA_HORA
+
+
+def test_health_con_la_version_del_model_registry(cliente, tmp_path):
+    """versiones.json (registrar_modelos.py) agrega la versión de MLflow solo al archivo que coincide."""
+    registro = {"alias": "produccion", "modelos": {
+        "detector_eventos": {"version": 3, "archivos": {"detector.joblib": "bbbbbbbbbbbb" + "0" * 52}},
+        "pronostico_24h": {"version": 2, "archivos": {"pronostico.joblib": "ffffffffffff" + "0" * 52}}}}
+    (tmp_path / "versiones.json").write_text(json.dumps(registro), encoding="utf-8")
+    m = cliente.get("/health").json()["modelos"]
+    assert m["detector"]["registro"] == {"nombre": "detector_eventos", "version": 3, "alias": "produccion"}
+    assert "registro" not in m["pronostico"]                  # otra huella: el registrado no es el cargado
+    (tmp_path / "versiones.json").write_text("{roto", encoding="utf-8")
+    assert "registro" not in cliente.get("/health").json()["modelos"]["detector"]
 
 
 def test_health_degradado_si_falla_el_pronostico_de_lluvia(cliente):

@@ -54,7 +54,7 @@ from monitoreo import usuarios as usuarios_
 from monitoreo.alertas import Alertas
 from monitoreo.cliente_datos import ClienteDatos
 from monitoreo.config import Config, RAIZ
-from monitoreo.modelos import Modelos, firma
+from monitoreo.modelos import Modelos, con_registro, firma
 from monitoreo.motor import DIAS_LLUVIA, Motor
 from monitoreo.trabajadores import Trabajadores
 
@@ -643,7 +643,7 @@ def crear_app(cfg=None):
             problemas.append(f"/predict en el proceso del servicio: {s.error_trabajadores}")
         return {"estado": "degradado" if problemas else "ok", "problemas": problemas,
                 "version": __version__,
-                "modelos": {**m.version, "modo": m.modo,
+                "modelos": {**con_registro(s.cfg.carpeta_modelos, m.version), "modo": m.modo,
                             "por_parametro": m.elegido, "umbral_detector": m.umbral},
                 "pronostico_lluvia": e["pronostico_lluvia"],
                 "lluvia_observada": {**s.fuente_lluvia.estado(),
