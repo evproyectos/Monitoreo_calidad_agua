@@ -108,7 +108,7 @@ por qué (sin la historia de MLflow sí arranca). Cómo publicar un release nuev
 | `db` | PostgreSQL 16 con TimescaleDB: tablas `pronosticos`, `deteccion`, `alarmas`, `anticipacion` y `fugas` (las que tienen fecha, como hipertablas), y `usuarios`, `sesiones`, `bitacora`, `notificaciones`, `alertas` y `alertas_historial` del dashboard | puerto 5432 dentro de Docker |
 | `mlflow` | los experimentos de los notebooks (`Modelo_calidad_agua/mlflow.db`) | http://127.0.0.1:5000 |
 | `datos` | solo con el perfil `simulador`: API de datos con el dataset del simulador (`Simulador_sensor/tiempo_real`) | http://127.0.0.1:8000 |
-| `emisor` | solo con el perfil `simulador`: manda las lecturas de la prueba como si fueran los sensores (31 días de precarga y después 1 h simulada por segundo; `VELOCIDAD=4` en el `.env` lo acelera) | — |
+| `emisor` | solo con el perfil `simulador`: manda las lecturas de la prueba como si fueran los sensores. Por defecto en tiempo real: 31 días de precarga que terminan ahora y después una lectura cada 15 min con la fecha y la hora en que sale (ver **Emisor en tiempo real**); `VELOCIDAD=1` en el `.env` la manda acelerada (horas simuladas por segundo) con las fechas originales | — |
 | `mailpit` | solo con el perfil `correo`: servidor de correo de prueba que recibe los correos de las alertas sin mandarlos a nadie y los muestra en una página (ver **Alertas por correo**) | http://127.0.0.1:8025 |
 
 **De dónde salen las lecturas.** En Docker, el servicio las pide a la API que diga
@@ -148,8 +148,9 @@ con la variable de entorno `FUENTE_PRONOSTICO`:
 
 - `archivo` (por defecto): los pronósticos pasados guardados en
   `Modelo_calidad_agua/clima/pronostico_lluvia_modelos.csv`. Es lo que corresponde con los datos
-  del emisor, que son de fechas pasadas: el servicio ve el pronóstico que existía en ese momento.
-- `open-meteo`: el pronóstico vigente de la API de Open-Meteo, para datos en tiempo real. Se
+  del emisor, que son de fechas pasadas: el servicio ve el pronóstico que existía en ese momento
+  (con el emisor en tiempo real, el del día original de los datos; ver **Emisor en tiempo real**).
+- `open-meteo`: el pronóstico vigente de la API de Open-Meteo, para sensores reales. Se
   consulta cada hora; si no hay conexión, se sigue con el último que se obtuvo.
 
 **Lluvia observada (RNF-009).** Los tres modelos usan también la lluvia que ya cayó
@@ -174,6 +175,22 @@ con las de los modelos, `/health` da `degradado` y dice qué hacer. La comparaci
 que pasa con cada modelo están en `Modelo_calidad_agua/docs/modelos/fuente-lluvia.md`. Otra fuente
 (otra API, una estación propia) se agrega con una clase nueva en ese archivo, sin tocar el
 servicio, el motor ni los modelos.
+
+**Emisor en tiempo real.** Con el perfil `simulador`, el emisor manda por defecto cada lectura
+con la fecha y la hora de Costa Rica en que sale: la de las 14:45 de hoy sale a las 14:45, y el
+dashboard, las alertas y los correos van con la hora del reloj. Los datos siguen siendo los de la
+prueba del simulador (may–ago 2026), corridos a hoy un número entero de semanas para que la hora del
+día y el día de la semana sean los mismos (el modelo de fugas distingue el fin de semana); arranca
+en el primer día de la prueba que cae el mismo día de la semana que hoy, y la precarga (31 días)
+termina ahora. Cada lectura trae también `fecha_datos`, su fecha original, y el servicio busca la
+lluvia observada y el pronóstico pasado en esa fecha (`fuentes_lluvia.ConLluvia` y
+`pronostico_lluvia.fijar_desfase`): son los que corresponden a lo que miden los sensores, y la
+lluvia de hoy no tendría nada que ver. Con sensores reales no llega `fecha_datos` y no se corre
+nada. La prueba alcanza para unas 16 semanas; después el emisor termina.
+
+Si se detiene y se vuelve a arrancar días después, los días que faltaron llegan en la precarga y
+se procesan de una vez. Para volver al emisor acelerado (fechas de 2026, anteriores a lo ya
+procesado) hay que empezar con la base vacía, porque el servicio no vuelve atrás en el tiempo.
 
 **Open-Meteo: límites y licencia.** La API gratuita es para uso no comercial (incluye proyectos sin
 fines de lucro, sin suscripciones ni publicidad) y permite 10 000 consultas al día por IP; el
@@ -256,7 +273,7 @@ hilo a la vez) y con 10 usuarios el percentil 95 pasaba de 5 s. `TRABAJADORES_PR
 cuántos (por defecto, los núcleos menos uno, hasta 3; unos 800 MB cada uno). La prueba se corre con
 el emisor ya terminado (`docker compose ps` ya no lo muestra): con `VELOCIDAD=1` manda una hora
 simulada por segundo y el motor pasa ocupado procesándolas, cosa que en operación ocurre una vez
-por hora (`VELOCIDAD=0.000278` es el ritmo real).
+por hora (como con `VELOCIDAD=real`).
 
 En GitHub, el CI (`.github/workflows/ci.yml`) corre en cada push y en cada pull request:
 estilo, pruebas con cobertura mínima de 70 % (instala `calidad_agua` desde el repositorio
@@ -298,8 +315,10 @@ Luego, en tres terminales:
 ```
 # 1 · Simulador_sensor:            python -m tiempo_real.servicio
 # 2 · este proyecto, en backend/:  python -m monitoreo.servicio
-# 3 · Simulador_sensor:            python -m tiempo_real.emisor --velocidad 1
+# 3 · Simulador_sensor:            python -m tiempo_real.emisor --tiempo-real --precarga-dias 31
 ```
+
+(`--velocidad 1` en lugar de `--tiempo-real` la manda acelerada, con las fechas originales.)
 
 y abrir **http://127.0.0.1:8001**. Con `--modo arboles` el servicio corre sin TensorFlow.
 

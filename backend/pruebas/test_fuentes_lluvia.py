@@ -95,6 +95,25 @@ def test_con_lluvia_pone_la_de_la_hora_que_termino():
     assert fl.ConLluvia(Datos(lecturas), fl.LluviaDeLecturas()).lecturas_desde() is lecturas
 
 
+def test_con_lluvia_en_la_fecha_de_los_datos_del_emisor_en_tiempo_real():
+    """Lecturas con la fecha de hoy y `fecha_datos` (la original, 28 semanas antes): la lluvia se pide
+    para la fecha de los datos y el desfase queda para el pronóstico pasado."""
+    from monitoreo import pronostico_lluvia
+    lecturas = [{"fecha": f"2026-11-12 {h}", "fecha_datos": f"2026-04-30 {h}", "valores": {"CL2_J10": 0.7}}
+                for h in ("09:45", "10:00")]
+    f, om = fuente()
+    r = fl.ConLluvia(Datos(lecturas), f).lecturas_desde()
+    assert [x["valores"]["lluvia_mm_h"] for x in r] == pytest.approx([0.9, 1.0])
+    assert r[0]["fecha"] == "2026-11-12 09:45"                    # la lectura sigue con la fecha de hoy
+    assert om.urls[0].startswith(fl.LluviaOpenMeteo.URL_HISTORICA) and "start_date=2026-04-30" in om.urls[0]
+    assert pronostico_lluvia.desfase() == pd.Timedelta(weeks=28)
+    fl.ConLluvia(Datos(lecturas), fl.LluviaDeLecturas()).lecturas_desde()
+    assert pronostico_lluvia.desfase() == pd.Timedelta(weeks=28)  # también con la lluvia de las lecturas
+    sin = [{"fecha": "2026-11-12 10:15", "valores": {}}]           # sensores reales: sin desfase
+    fl.ConLluvia(Datos(sin), fl.LluviaDeLecturas()).lecturas_desde()
+    assert pronostico_lluvia.desfase() == pd.Timedelta(0)
+
+
 def test_sin_lluvia_queda_vacia():
     f, _ = fuente(falla=99)
     r = fl.ConLluvia(Datos([{"fecha": "2026-11-12 10:00", "valores": {}}]), f).lecturas_desde()

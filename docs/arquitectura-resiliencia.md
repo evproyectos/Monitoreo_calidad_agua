@@ -85,8 +85,9 @@ vez, y otra cuando los datos vuelven, con cuánto tiempo estuvieron sin llegar.
 - **Una alarma abierta antes de un reinicio** vuelve a necesitar sus horas de confirmación (3 h)
   para abrirse en el motor; en la gestión de alertas sigue abierta (se actualiza la misma, no se
   crea otra ni se vuelve a notificar), así que no se pierde el seguimiento.
-- **El aviso de datos que no llegan usa el reloj real.** Con el simulador acelerado (`VELOCIDAD` > 1)
-  los datos avanzan más rápido que el reloj, pero el aviso sigue midiendo minutos reales sin lecturas.
+- **El aviso de datos que no llegan usa el reloj real.** Con el simulador acelerado (`VELOCIDAD` con
+  un número) los datos avanzan más rápido que el reloj, pero el aviso sigue midiendo minutos reales
+  sin lecturas. Con `VELOCIDAD=real` (por defecto) datos y reloj van juntos.
 - **Docker reinicia contenedores, no la máquina.** Para que todo vuelva solo después de un corte de
   luz, Docker Desktop tiene que iniciar con Windows.
 

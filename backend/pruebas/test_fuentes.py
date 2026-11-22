@@ -28,6 +28,21 @@ def test_pronostico_desde_archivo(tmp_path):
     assert v.iloc[0].tolist() == [6.0, 6.0, 12.0]
 
 
+def test_pronostico_desde_archivo_en_la_fecha_de_los_datos(tmp_path):
+    """Con el emisor en tiempo real las lecturas llegan con la fecha de hoy: el pronóstico pasado se
+    busca en la fecha original de los datos (28 semanas antes) y vuelve con la de las lecturas."""
+    ruta = archivo_pronostico(tmp_path / "p.csv")
+    lineas = ruta.read_text(encoding="utf-8").splitlines()
+    lineas[5] = lineas[5].split(",")[0] + ",30,30,30,30"         # 30 mm a la 01:00 del 01/05
+    ruta.write_text("\n".join(lineas), encoding="utf-8")
+    p = pl.PronosticoArchivo(ruta)
+    hoy = pd.date_range("2026-11-13", periods=3, freq="1h")     # 28 semanas después, mismo día de la semana
+    assert p.ventanas(hoy).isna().all().all()                     # sin desfase: el archivo no llega a noviembre
+    pl.fijar_desfase(pd.Timedelta(weeks=28))
+    v = p.ventanas(hoy)
+    assert list(v.index) == list(hoy) and v.iloc[0]["lluvia_pron_0_6h"] == pytest.approx(35.0)
+
+
 class RespuestaOpenMeteo(io.BytesIO):
     def __init__(self, mm, horas=48):
         idx = pd.date_range("2026-05-01", periods=horas, freq="1h")

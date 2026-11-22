@@ -18,6 +18,13 @@ que se entrenaron (ECMWF IFS, GFS, ICON y GEM). Hay dos fuentes:
               (uso no comercial). Datos de Open-Meteo.com, licencia CC BY 4.0.
 
 Se elige con la variable de entorno FUENTE_PRONOSTICO.
+
+Desfase: el emisor del simulador en tiempo real corre las fechas de los datos (may–ago 2026) a la
+hora actual y manda en cada lectura `fecha_datos`, la fecha original. El pronóstico pasado (archivo)
+se busca en la fecha de los datos y no en la de la lectura, para que sea el de la lluvia que causó lo
+que miden los sensores. Lo fija fuentes_lluvia.ConLluvia con cada consulta a la API de datos; con
+sensores reales (o con el emisor acelerado, que manda las fechas originales) es 0. El pronóstico
+vigente de Open-Meteo no lo usa: es el de ahora.
 """
 
 import json
@@ -49,6 +56,19 @@ def con_clave(url, clave=None):
     return urllib.parse.urlunsplit(partes._replace(netloc="customer-" + partes.netloc, query=consulta))
 
 
+_desfase = pd.Timedelta(0)
+
+
+def fijar_desfase(desfase):
+    """Fecha de las lecturas menos fecha de los datos (ver arriba)."""
+    global _desfase
+    _desfase = pd.Timedelta(desfase)
+
+
+def desfase():
+    return _desfase
+
+
 class PronosticoArchivo:
     descripcion = "pronósticos pasados de Open-Meteo (archivo)"
 
@@ -56,7 +76,10 @@ class PronosticoArchivo:
         self.serie = clima.cargar_pronostico(ruta, modelos)
 
     def ventanas(self, horas):
-        return clima.ventanas(self.serie, horas)
+        horas = pd.DatetimeIndex(horas)
+        v = clima.ventanas(self.serie, horas - _desfase)
+        v.index = horas
+        return v
 
 
 class PronosticoOpenMeteo:

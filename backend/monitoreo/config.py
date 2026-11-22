@@ -6,7 +6,7 @@ Configuración del servicio. Cada valor se puede cambiar con una variable de ent
   MODO_PRONOSTICO    "combinado" (árboles + LSTM) o "arboles" (sin TensorFlow)
   CARPETA_REGISTROS  CSV de cada sesión                     (por defecto registros/ de este proyecto)
   FUENTE_PRONOSTICO  pronóstico de lluvia: "archivo" (pronósticos pasados, para los datos del
-                     emisor) u "open-meteo" (pronóstico vigente, para datos en tiempo real)
+                     emisor) u "open-meteo" (pronóstico vigente, para sensores reales)
   FUENTE_LLUVIA      lluvia observada: "lecturas" (viene en las lecturas, como la manda el simulador)
                      u "open-meteo" (se consulta para cada hora; los sensores reales no miden lluvia).
                      Por defecto, la misma con que se entrenaron los modelos (fuente_lluvia.json en

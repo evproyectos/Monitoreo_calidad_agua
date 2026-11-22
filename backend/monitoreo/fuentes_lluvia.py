@@ -40,6 +40,7 @@ import urllib.request
 import numpy as np
 import pandas as pd
 
+from monitoreo import pronostico_lluvia
 from monitoreo.pronostico_lluvia import LATITUD, LONGITUD, con_clave
 from monitoreo.reintentos import reintentar
 
@@ -178,6 +179,10 @@ class ConLluvia:
     """
     El cliente de la API de datos, con la lluvia de la fuente elegida en cada lectura. Para el
     servicio es igual que el cliente (mismo `lecturas_desde`); con la fuente `lecturas` no cambia nada.
+
+    Si las lecturas traen `fecha_datos` (el emisor del simulador en tiempo real, que corre las fechas
+    a la hora actual), la lluvia se busca en esa fecha, la de los datos, y el desfase queda fijado
+    para el pronóstico pasado (pronostico_lluvia.fijar_desfase).
     """
 
     def __init__(self, cliente, fuente):
@@ -185,9 +190,14 @@ class ConLluvia:
 
     def lecturas_desde(self, desde=None):
         lecturas = self.cliente.lecturas_desde(desde)
-        if not lecturas or isinstance(self.fuente, LluviaDeLecturas):
+        if not lecturas:
             return lecturas
-        fechas = pd.DatetimeIndex(pd.to_datetime([x["fecha"] for x in lecturas]))
+        ultima = lecturas[-1]
+        pronostico_lluvia.fijar_desfase(pd.Timestamp(ultima["fecha"]) - pd.Timestamp(ultima["fecha_datos"])
+                                        if ultima.get("fecha_datos") else 0)
+        if isinstance(self.fuente, LluviaDeLecturas):
+            return lecturas
+        fechas = pd.DatetimeIndex(pd.to_datetime([x.get("fecha_datos") or x["fecha"] for x in lecturas]))
         valores = self.fuente.lluvia(fechas.min(), fechas.max()).reindex(fechas.floor("h")).to_numpy()
         return [{**x, "valores": {**x["valores"], COLUMNA: None if np.isnan(v) else float(v)}}
                 for x, v in zip(lecturas, valores)]

@@ -13,7 +13,10 @@
 #   mlflow      experimentos de los notebooks                http://127.0.0.1:5000
 #   db          PostgreSQL con TimescaleDB: el servicio guarda ahí los resultados de cada hora
 #   datos       solo con el perfil `simulador`: API de datos con el dataset del simulador
-#   emisor      solo con el perfil `simulador`: manda las lecturas de la prueba a la API de datos
+#   emisor      solo con el perfil `simulador`: manda las lecturas de la prueba a la API de datos.
+#               Por defecto en tiempo real: una lectura cada 15 min con la fecha y la hora de ahora
+#               (los 31 días de precarga terminan ahora). VELOCIDAD=1 en el .env (horas simuladas por
+#               segundo) la manda acelerada, con las fechas originales de los datos (may–ago 2026)
 #   mailpit     solo con el perfil `correo`: correo de prueba que recibe los correos de las alertas
 #               y los muestra en http://127.0.0.1:8025
 #
@@ -22,6 +25,9 @@
 # (servicio `datos`), que necesita Simulador_sensor al lado y el perfil: COMPOSE_PROFILES=simulador
 # en el .env, o  docker compose --profile simulador up.
 # Los perfiles se suman con comas: COMPOSE_PROFILES=simulador,correo
+#
+# El servicio, la API de datos y el emisor van con la hora de Costa Rica (TZ): sin eso las horas
+# que anota el servicio (alertas, historial, accesos) quedarían en UTC, 6 h adelantadas.
 #
 # Los secretos (SMTP_CONTRASENA, TELEGRAM_TOKEN, CLAVES_API, ...) van en el .env de esta carpeta, que no se
 # versiona; sin él el servicio funciona igual, con las alertas en la consola. Si el .env tiene
@@ -43,6 +49,8 @@ services:
     build:
       context: ..
       dockerfile: Monitoreo_calidad_agua/docker/datos.Dockerfile
+    environment:
+      TZ: America/Costa_Rica
     ports: ["127.0.0.1:8000:8000"]
     volumes:
       - ../Simulador_sensor/datos:/app/datos:ro
@@ -57,7 +65,9 @@ services:
     build:
       context: ..
       dockerfile: Monitoreo_calidad_agua/docker/datos.Dockerfile
-    command: ["python", "-m", "tiempo_real.emisor", "--url", "http://datos:8000", "--velocidad", "${VELOCIDAD:-1}", "--precarga-dias", "31"]
+    command: ["python", "-m", "tiempo_real.emisor", "--url", "http://datos:8000", "--velocidad", "${VELOCIDAD:-real}", "--precarga-dias", "31"]
+    environment:
+      TZ: America/Costa_Rica
     volumes:
       - ../Simulador_sensor/datos:/app/datos:ro
     depends_on:
@@ -87,6 +97,7 @@ services:
       - path: .env
         required: false
     environment:
+      TZ: America/Costa_Rica
       URL_DATOS: ${URL_DATOS_DOCKER:-http://datos:8000}
       MLFLOW_URL: http://mlflow:5000            # el F1 de cada día (rendimiento.py, RNF-003)
       CARPETA_MODELOS: /modelos

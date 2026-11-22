@@ -15,6 +15,17 @@ os.environ["MONITOREO_SIN_ENV"] = "1"            # las pruebas no leen el .env d
 from calidad_agua.red_neuronal import SALIDAS  # noqa: E402  (después de MONITOREO_SIN_ENV)
 from monitoreo.config import Config  # noqa: E402  (después de MONITOREO_SIN_ENV)
 
+
+@pytest.fixture(autouse=True)
+def sin_desfase():
+    """El desfase de fechas del emisor en tiempo real (pronostico_lluvia.fijar_desfase) es del proceso:
+    cada prueba empieza y termina sin él."""
+    from monitoreo import pronostico_lluvia
+    pronostico_lluvia.fijar_desfase(0)
+    yield
+    pronostico_lluvia.fijar_desfase(0)
+
+
 SENSORES = ["J280", "J10", "J20"]                 # en el orden de la red (J280 es la fuente)
 PARAMETROS = ["CL2", "TEMP", "TURB", "PH", "P"]
 INICIO = pd.Timestamp("2026-05-01 00:00")
