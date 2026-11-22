@@ -54,12 +54,14 @@ frontend/              dashboard en React (Vite + Recharts)
     Sesion.jsx         inicio de sesión, contraseña temporal y después el dashboard
     App.jsx            páginas: #/general, #/sensor/J224, #/alertas/12, #/usuarios (administrador) y #/cuenta
     estado.js          semáforo y alertas activas ordenadas por severidad y antelación
-    componentes/       Menu (menú de la izquierda), Encabezado, Tarjetas, Curva, AlertasActivas, VistaGeneral, Anticipacion, Fugas,
+    componentes/       Estructura (barra de arriba, título, pie), Menu (menú de la izquierda), Encabezado, Tarjetas, Curva, AlertasActivas, VistaGeneral, Anticipacion, Fugas,
                        GraficoRed (y serieRed.js), MapaCalor, DetalleSensor, Graficos, Alarmas,
                        InicioSesion, Cuenta, Usuarios, CorreoAlertas, GestionAlertas
     api.js             consultas periódicas al backend y aviso cuando vence la sesión
     formato.js         etiquetas, norma, tolerancias, formato de números y fechas
-    estilos.css        colores (modo claro y oscuro), tipografía y diseño
+    estilos.css        colores (modo claro y oscuro), tipografía y diseño: el aspecto de la plantilla
+                       Velzon (variante default, licencia de la ASADA) hecho con CSS propio; el
+                       repositorio no incluye archivos de Velzon
   index.html           pide la sesión y los primeros datos mientras baja el JavaScript (RNF-001)
   medir-lcp.mjs        LCP del dashboard con red Fast 3G (RNF-001)
 registros/             CSV de cada sesión del motor y accesos rechazados (no se versiona)
@@ -228,12 +230,12 @@ npm run lcp
 
 | Página | Antes | Ahora (mediana · máximo) | Transferido antes → ahora |
 |---|---|---|---|
-| Inicio de sesión | 5,9 s | 1,9 s · 1,9 s | 784 KB → 145 KB |
-| Vista general | 6,7 s | 2,0 s · 2,1 s | 1036 KB → 327 KB |
-| Detalle de un sensor | 6,6 s | 2,0 s · 2,0 s | 1132 KB → 342 KB |
+| Inicio de sesión | 5,9 s | 2,0 s · 2,0 s | 784 KB → 136 KB |
+| Vista general | 6,7 s | 2,0 s · 2,0 s | 1036 KB → 303 KB |
+| Detalle de un sensor | 6,6 s | 2,1 s · 2,1 s | 1132 KB → 318 KB |
 
-(13/11/2026, servicio local con 10 días del periodo de prueba, pantalla de 1366 × 768; en teléfono,
-1,9 s en las tres.) Lo que cambió:
+(21/11/2026, servicio local con 10 días del periodo de prueba, pantalla de 1366 × 768; en teléfono,
+entre 2,0 y 2,1 s.) Lo que cambió:
 
 - **Compresión**: el servicio manda el dashboard y las respuestas JSON con gzip (`GZipMiddleware`);
   el JavaScript inicial pasó de 678 KB a 81 KB transferidos. Los archivos de `assets/` llevan un hash
@@ -244,7 +246,9 @@ npm run lcp
 - **Los datos no esperan al JavaScript**: `index.html` pide la sesión y los datos de la primera
   pantalla mientras baja el JavaScript (`api.js` usa esas respuestas una sola vez y en los primeros
   15 s; sin sesión las descarta).
-- **Letra**: solo el alfabeto latino de Manrope (con tildes y ñ); el CSS pasó de 66 KB a 32 KB.
+- **Letra**: solo el alfabeto latino de Poppins (con tildes y ñ) y cuatro grosores.
+- **El logo** va en WebP de 17 KB y `index.html` lo pide de primero (`preload`), porque en la
+  pantalla de inicio de sesión es lo más grande que se pinta.
 
 Las predicciones a pedido se atienden en procesos aparte (`monitoreo/trabajadores.py`), cada uno
 con su copia de los modelos: en un solo proceso las solicitudes hacen fila (Python ejecuta de a un
@@ -606,5 +610,5 @@ la misma licencia. No incluye:
 
 - **Los datos de Open-Meteo** (lluvia observada y pronosticada): CC BY 4.0, por eso el dashboard
   muestra el crédito al pie.
-- **Las librerías y la fuente tipográfica** (FastAPI, React, Recharts, la fuente Manrope…), que
+- **Las librerías y la fuente tipográfica** (FastAPI, React, Recharts, la fuente Poppins…), que
   tienen sus propias licencias.

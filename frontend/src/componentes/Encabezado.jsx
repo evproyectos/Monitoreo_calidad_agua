@@ -10,7 +10,7 @@ export default function Encabezado({ resumen, hora }) {
       <span className="semaforo" aria-hidden="true"><i /><i /><i /></span>
       <div>
         <span className="nivel">{NIVELES[resumen.nivel].texto}</span>
-        <h1>{resumen.texto}</h1>
+        <h2>{resumen.texto}</h2>
       </div>
       {hora && <span className="hora">Actualizado: {fechaHora(hora)}</span>}
     </div>

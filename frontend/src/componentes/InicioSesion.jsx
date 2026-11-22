@@ -1,13 +1,16 @@
 import { useState } from "react";
 import { pedir } from "../api.js";
+import logo from "../assets/logo-asada.webp";
 
-export function Marca() {
+// El logo de la ASADA con su nombre al lado (menú y barra del teléfono) o arriba, más grande
+// (inicio de sesión). El logo no lleva texto alternativo: el nombre ya está escrito al lado.
+export function Marca({ grande = false }) {
+  const lado = grande ? 112 : 44;
   return (
-    <div className="marca">
-      <svg viewBox="0 0 32 32" width="34" height="34" aria-hidden="true" className="gota">
-        <path d="M16 3c5.5 7 9 12 9 16.5A9 9 0 0 1 7 19.5C7 15 10.5 10 16 3z" />
-        <path d="M11.5 20.5a4.5 4.5 0 0 0 4.5 4.5" fill="none" strokeWidth="2" strokeLinecap="round" />
-      </svg>
+    <div className={`marca${grande ? " marca-grande" : ""}`}>
+      <span className="logo">
+        <img src={logo} alt="" width={lado} height={lado} decoding="async" />
+      </span>
       <div>
         <strong>ASADA La Lucha</strong>
         <span>Alertas tempranas de calidad del agua</span>
@@ -46,7 +49,7 @@ export default function InicioSesion({ onEntrar, vencida, sinServicio, onReinten
   return (
     <div className="pantalla-sesion">
       <form className="tarjeta-sesion" onSubmit={enviar} noValidate>
-        <Marca />
+        <Marca grande />
         <h1>Iniciar sesión</h1>
         {vencida && !error && <p className="mensaje info" role="status">Tu sesión terminó. Vuelve a entrar.</p>}
         {sinServicio && !error && (

@@ -53,7 +53,7 @@ export default function Sesion() {
     return (
       <div className="pantalla-sesion">
         <div className="tarjeta-sesion">
-          <Marca />
+          <Marca grande />
           <Suspense fallback={<p className="vacio">Cargando…</p>}>
             <Cuenta obligatoria usuario={s.datos.usuario} onListo={(datos) => setS({ cargando: false, datos })}
                     onSalir={salir} />

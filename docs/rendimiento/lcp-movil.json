@@ -1,6 +1,6 @@
 {
   "url": "http://127.0.0.1:8001",
-  "fecha": "2026-11-14T02:11:36.927Z",
+  "fecha": "2026-11-22T04:31:48.158Z",
   "pantalla": "teléfono 390 × 844",
   "red": "Fast 3G (562,5 ms, 1,44 Mbit/s bajada, 675 kbit/s subida)",
   "cpu": "4 veces más lento",
@@ -10,22 +10,22 @@
       "pagina": "Inicio de sesión",
       "ruta": "/",
       "lcp_ms": [
-        1868,
-        1892,
-        1900,
-        1904,
-        1908
+        1952,
+        1960,
+        1964,
+        1972,
+        1984
       ],
-      "lcp_mediana_ms": 1900,
-      "lcp_max_ms": 1908,
+      "lcp_mediana_ms": 1964,
+      "lcp_max_ms": 1984,
       "cumple": true,
-      "elemento_lcp": "P",
+      "elemento_lcp": "IMG",
       "fcp_ms": [
-        1740,
-        1740,
-        1740,
-        1736,
-        1740
+        1868,
+        1868,
+        1848,
+        1852,
+        1864
       ],
       "datos_en_pantalla_ms": [
         null,
@@ -34,67 +34,67 @@
         null,
         null
       ],
-      "kb_transferidos": 145
+      "kb_transferidos": 136
     },
     {
       "pagina": "Vista general",
       "ruta": "#/general",
       "lcp_ms": [
-        1876,
-        1888,
-        1892,
-        1892,
-        1896
+        2068,
+        2084,
+        2104,
+        2104,
+        2116
       ],
-      "lcp_mediana_ms": 1892,
-      "lcp_max_ms": 1896,
+      "lcp_mediana_ms": 2104,
+      "lcp_max_ms": 2116,
       "cumple": true,
-      "elemento_lcp": "H1",
+      "elemento_lcp": "SPAN",
       "fcp_ms": [
-        1732,
-        1752,
-        1784,
-        1732,
-        1732
+        1860,
+        1868,
+        1872,
+        1864,
+        1856
       ],
       "datos_en_pantalla_ms": [
-        1962,
-        1943,
-        1953,
-        1956,
-        1934
+        2066,
+        2067,
+        2042,
+        2062,
+        2025
       ],
-      "kb_transferidos": 327
+      "kb_transferidos": 303
     },
     {
       "pagina": "Detalle de un sensor",
       "ruta": "#/sensor/J224",
       "lcp_ms": [
-        1856,
-        1860,
-        1876,
-        1876,
-        1892
+        2080,
+        2096,
+        2116,
+        2124,
+        2128
       ],
-      "lcp_mediana_ms": 1876,
-      "lcp_max_ms": 1892,
+      "lcp_mediana_ms": 2116,
+      "lcp_max_ms": 2128,
       "cumple": true,
-      "elemento_lcp": "H1",
+      "elemento_lcp": "SPAN",
       "fcp_ms": [
-        1736,
-        1732,
-        1744,
-        1732,
-        1756
+        1860,
+        1856,
+        1856,
+        1864,
+        1860
       ],
       "datos_en_pantalla_ms": [
-        1919,
-        1936,
-        1918,
-        1923,
-        2002
+        2085,
+        2082,
+        2039,
+        2077,
+        2054
       ],
-      "kb_transferidos": 342
+      "kb_transferidos": 318
     }
   ]
 }

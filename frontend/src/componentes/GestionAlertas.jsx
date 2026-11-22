@@ -1,12 +1,14 @@
 import { useEffect, useState } from "react";
 import { pedir, useConsulta } from "../api.js";
 import { fechaHora, horasEntre, TIPOS } from "../formato.js";
+import { Icono } from "./Menu.jsx";
 
-// Gestión de alertas (CU-06): lista filtrable por estado, tipo, nodo y fecha; el detalle con lo que
-// hay que saber para actuar; reconocerla, anotar lo que se hizo en campo y cerrarla con su resultado.
-// Arriba, el F1 de las alarmas de los últimos 7 días con lo verificado en campo (RF-004.2, RNF-003) y
-// el registro de los eventos que ocurrieron sin alerta. Todos los roles la ven; solo el operador técnico
-// y el administrador la atienden.
+// Gestión de alertas (CU-06), con el esquema de las páginas de tickets de Velzon. En #/alertas: los
+// indicadores en tarjetas, el registro en una tabla filtrable por estado, tipo, nodo y fecha, y el F1
+// de las alarmas de los últimos 7 días con lo verificado en campo (RF-004.2, RNF-003) con el registro
+// de los eventos que ocurrieron sin alerta. En #/alertas/<id>: el detalle con lo que hay que saber para
+// actuar; reconocerla, anotar lo que se hizo en campo, cerrarla con su resultado, y su historial.
+// Todos los roles la ven; solo el operador técnico y el administrador la atienden.
 
 const ESTADOS = { nueva: "Nueva", en_atencion: "En atención", cerrada: "Cerrada" };
 const CLASE_ESTADO = { nueva: "nivel-rojo", en_atencion: "nivel-amarillo", cerrada: "nivel-verde" };
@@ -118,36 +120,49 @@ function Rendimiento({ puede }) {
   );
 }
 
-function Indicadores({ datos }) {
-  if (!datos) return null;
+function Widget({ etiqueta, valor, nota, icono, tono }) {
   return (
-    <div className="indicadores" role="group" aria-label="Resumen de las alertas">
-      <div className={datos.rojas_sin_atender ? "urgente" : ""}>
-        <b>{datos.nuevas}</b><span>Sin atender{datos.rojas_sin_atender ? ` (${datos.rojas_sin_atender} críticas)` : ""}</span>
-      </div>
-      <div><b>{datos.en_atencion}</b><span>En atención</span></div>
-      <div><b>{datos.cerradas}</b><span>Cerradas en {datos.dias} días</span></div>
+    <div className={`panel widget tono-${tono}`}>
       <div>
-        <b>{datos.confirmadas_pct == null ? "—" : `${datos.confirmadas_pct} %`}</b>
-        <span>Confirmadas en campo</span>
+        <p className="widget-etq">{etiqueta}</p>
+        <p className="widget-valor">{valor}</p>
+        {nota && <p className="widget-nota">{nota}</p>}
       </div>
+      <span className="widget-icono" aria-hidden="true"><Icono nombre={icono} tam={24} /></span>
     </div>
   );
 }
 
-function Fila({ a, elegida }) {
+function Indicadores({ datos }) {
+  if (!datos) return null;
   return (
-    <li className={`nivel-${a.nivel}${elegida ? " elegida" : ""}`}>
-      <a href={`#/alertas/${a.id}`} aria-current={elegida ? "true" : undefined}>
-        <span className="titulo"><i className={`punto ${a.nivel}`} aria-hidden="true" />{a.titulo}</span>
-        <span className="lugar">{a.tipo_nombre} · {a.lugar ?? "Toda la red"}</span>
-        <span className="pie">
-          <time>{fechaHora(a.inicio)}</time>
-          <span className={`pastilla ${CLASE_ESTADO[a.estado]}`}>{a.estado === "cerrada" ? a.resultado_nombre : ESTADOS[a.estado]}</span>
-          {a.estado === "en_atencion" && <span className="quien">{a.responsable_nombre}</span>}
-        </span>
-      </a>
-    </li>
+    <div className="widgets" role="group" aria-label="Resumen de las alertas">
+      <Widget etiqueta="Sin atender" valor={datos.nuevas} icono="alertas" tono={datos.rojas_sin_atender ? "rojo" : "neutro"}
+              nota={datos.rojas_sin_atender ? `${datos.rojas_sin_atender} ${datos.rojas_sin_atender === 1 ? "crítica" : "críticas"}` : "Ninguna crítica"} />
+      <Widget etiqueta="En atención" valor={datos.en_atencion} icono="reloj" tono="amarillo" nota="Con un responsable asignado" />
+      <Widget etiqueta={`Cerradas en ${datos.dias} días`} valor={datos.cerradas} icono="listo" tono="verde" nota="Con su resultado de campo" />
+      <Widget etiqueta="Confirmadas en campo" valor={datos.confirmadas_pct == null ? "—" : `${datos.confirmadas_pct} %`}
+              icono="campo" tono="azul" nota="De las cerradas" />
+    </div>
+  );
+}
+
+function Fila({ a }) {
+  return (
+    <tr className={`nivel-${a.nivel}`}>
+      <td data-etq="Número"><a href={`#/alertas/${a.id}`} className="id-alerta">#{a.id}</a></td>
+      <td data-etq="Alerta" className="col-alerta">
+        <a href={`#/alertas/${a.id}`}>{a.titulo}</a>
+        <span>{a.tipo_nombre}</span>
+      </td>
+      <td data-etq="Lugar">{a.lugar ?? "Toda la red"}</td>
+      <td data-etq="Inicio"><time>{fechaHora(a.inicio)}</time></td>
+      <td data-etq="Prioridad"><span className={`pastilla nivel-${a.nivel}`}><i />{NIVEL[a.nivel]}</span></td>
+      <td data-etq="Estado">
+        <span className={`pastilla ${CLASE_ESTADO[a.estado]}`}>{a.estado === "cerrada" ? a.resultado_nombre : ESTADOS[a.estado]}</span>
+      </td>
+      <td data-etq="Responsable">{a.responsable_nombre ?? <span className="nota">Nadie todavía</span>}</td>
+    </tr>
   );
 }
 
@@ -159,29 +174,7 @@ function duracion(inicio, fin) {
   return `${d} día${d > 1 ? "s" : ""}${h % 24 ? ` y ${h % 24} h` : ""}`;
 }
 
-// Sin alerta elegida: en vez de un panel vacío, cuántas hay por atender y la más reciente.
-function SinElegir({ filas }) {
-  const nuevas = filas.filter((a) => a.estado === "nueva");
-  const primera = nuevas[0] ?? filas[0];
-  return (
-    <section className="panel detalle-alerta vacia">
-      {primera ? (
-        <div className="sin-elegir">
-          <p className="nota">{nuevas.length ? `${nuevas.length === 1 ? "1 alerta" : `${nuevas.length} alertas`} sin atender. La más reciente:` : "La más reciente de la lista:"}</p>
-          <a className={`lista-gestion-alertas-una nivel-${primera.nivel}`} href={`#/alertas/${primera.id}`}>
-            <b>{primera.titulo}</b>
-            <span>{primera.tipo_nombre} · {primera.lugar ?? "Toda la red"} · {fechaHora(primera.inicio)}</span>
-          </a>
-          <p className="nota">O elige otra de la lista para ver su detalle y atenderla.</p>
-        </div>
-      ) : (
-        <p className="vacio">No hay alertas en la lista. Cuando el sistema detecte o anticipe un evento, aparece aquí.</p>
-      )}
-    </section>
-  );
-}
-
-function Detalle({ id, yo, puede, onCambio, filas }) {
+function Detalle({ id, yo, puede, onCambio }) {
   const consulta = useConsulta(id ? `/api/alertas/${id}` : null, 10000);
   const [nota, setNota] = useState("");
   const [cierre, setCierre] = useState({ resultado: "", observaciones: "" });
@@ -190,9 +183,9 @@ function Detalle({ id, yo, puede, onCambio, filas }) {
   useEffect(() => { setNota(""); setCierre({ resultado: "", observaciones: "" }); setMsj(null); }, [id]);
 
   const a = consulta.datos;
-  if (!id) return <SinElegir filas={filas} />;
-  if (consulta.error?.status === 404) return <section className="panel detalle-alerta"><p className="vacio">Esa alerta no existe.</p></section>;
-  if (!a) return <section className="panel detalle-alerta"><p className="vacio">Cargando…</p></section>;
+  const volver = <a href="#/alertas" className="volver"><Icono nombre="atras" tam={18} />Volver al registro de alertas</a>;
+  if (consulta.error?.status === 404) return <section className="panel">{volver}<p className="vacio">Esa alerta no existe.</p></section>;
+  if (!a) return <section className="panel">{volver}<p className="vacio">Cargando…</p></section>;
 
   const hacer = async (ruta, cuerpo, ok) => {
     setOcupado(true);
@@ -213,124 +206,155 @@ function Detalle({ id, yo, puede, onCambio, filas }) {
   const abierta = a.estado !== "cerrada";
   const deOtro = a.estado === "en_atencion" && a.responsable !== (yo.correo ?? "sin_sesion");
 
+  const dato = (titulo, valor) => <div><dt>{titulo}</dt><dd>{valor}</dd></div>;
   return (
-    <section className={`panel detalle-alerta nivel-${a.nivel}`} aria-label="Detalle de la alerta">
-      <a href="#/alertas" className="volver">Volver a todas las alertas</a>
-      <div className="cabeza-alerta">
-        <span className={`pastilla nivel-${a.nivel}`}><i />{NIVEL[a.nivel]}</span>
-        <span className={`pastilla ${CLASE_ESTADO[a.estado]}`}>{a.estado === "cerrada" ? `Cerrada: ${a.resultado_nombre}` : ESTADOS[a.estado]}</span>
-        <span className="nota">#{a.id} · {a.activa ? "El sistema la sigue detectando" : `Terminó el ${fechaHora(a.fin)}`}</span>
-      </div>
-      <h2>{a.titulo}</h2>
-
-      <dl className="datos-alerta">
-        <div><dt>Tipo</dt><dd>{a.tipo_nombre}{a.evento && EVENTO[a.evento] && a.tipo !== "fuga" ? ` · ${EVENTO[a.evento]}` : ""}</dd></div>
-        <div><dt>Dónde</dt><dd>{a.lugar ?? "Toda la red"}</dd></div>
-        <div><dt>Probabilidad</dt><dd>{pct(a.probabilidad)}</dd></div>
-        {/* si ya terminó, cuánto duró; si sigue, desde cuándo o con cuánta antelación se avisó */}
-        {a.activa || !a.fin ? (
-          <div><dt>Antelación</dt><dd>{a.antelacion_h ? `${a.antelacion_h} h antes` : "Está ocurriendo"}</dd></div>
-        ) : (
-          <div><dt>Duró</dt><dd>{duracion(a.inicio, a.fin)}</dd></div>
-        )}
-        <div><dt>Desde</dt><dd>{fechaHora(a.inicio)}</dd></div>
-        {!a.activa && a.fin && <div><dt>Hasta</dt><dd>{fechaHora(a.fin)}</dd></div>}
-        <div><dt>Responsable</dt><dd>{a.responsable_nombre ?? "Nadie todavía"}</dd></div>
-      </dl>
-      {a.parametros && <p className="parametros"><b>Lecturas:</b> {a.parametros}.</p>}
-      {a.accion && <p className="accion-recomendada"><b>Qué hacer:</b> {a.accion}.</p>}
-      {a.nodos?.length > 0 && a.tipo !== "fuga" && (
-        <p className="nota">Ver el sensor: {a.nodos.map((n, i) => <span key={n}>{i ? ", " : ""}<a href={`#/sensor/${n}`}>{n}</a></span>)}</p>
-      )}
-
-      {msj?.ok && <p className="mensaje ok" role="status">{msj.ok}</p>}
-      {msj?.error && <p className="mensaje error" role="alert">{msj.error}</p>}
-
-      {abierta && puede && (
-        <div className="atender">
-          {a.estado === "nueva" && (
-            <button className="boton primario" disabled={ocupado}
-                    onClick={() => hacer("reconocer", undefined, "Quedaste como responsable de esta alerta.")}>
-              Reconocer y atender
-            </button>
-          )}
-          {deOtro && <p className="mensaje info">La atiende {a.responsable_nombre}. Puedes agregar observaciones.</p>}
-
-          <form className="formulario" onSubmit={async (e) => {
-            e.preventDefault();
-            if (await hacer("notas", { texto: nota }, "Observación agregada.")) setNota("");
-          }}>
-            <label className="campo">
-              <span>Acciones realizadas y observaciones de campo</span>
-              <textarea rows={3} value={nota} onChange={(e) => setNota(e.target.value)}
-                        placeholder="Ej.: se tomó muestra en la llave del parque; cloro residual 0,15 mg/L." />
-            </label>
-            <div className="acciones"><button className="boton" disabled={ocupado || nota.trim().length < 5}>Agregar observación</button></div>
-          </form>
-
-          {!deOtro && (
-            <form className="formulario cierre" onSubmit={async (e) => {
-              e.preventDefault();
-              await hacer("cerrar", cierre, "Alerta cerrada. Gracias: este resultado sirve para evaluar el modelo.");
-            }}>
-              <fieldset>
-                <legend>Cerrar la alerta: ¿qué se encontró?</legend>
-                {RESULTADOS.map((r) => (
-                  <label key={r.valor} className={`opcion${cierre.resultado === r.valor ? " elegida" : ""}`}>
-                    <input type="radio" name="resultado" value={r.valor} checked={cierre.resultado === r.valor}
-                           onChange={() => setCierre({ ...cierre, resultado: r.valor })} />
-                    <span><b>{r.texto}</b><small>{r.ayuda}</small></span>
-                  </label>
-                ))}
-              </fieldset>
-              <label className="campo">
-                <span>Observaciones (obligatorias)</span>
-                <textarea rows={3} value={cierre.observaciones} required
-                          onChange={(e) => setCierre({ ...cierre, observaciones: e.target.value })}
-                          placeholder="Qué se revisó, qué se encontró y qué se hizo." />
-              </label>
-              <div className="acciones">
-                <button className="boton primario" disabled={ocupado || !cierre.resultado || cierre.observaciones.trim().length < 5}>
-                  Cerrar alerta
-                </button>
-              </div>
-            </form>
-          )}
+    <div className="detalle-alerta">
+      {volver}
+      <section className={`panel cabecera-alerta nivel-${a.nivel}`} aria-label="Alerta">
+        <span className="cabecera-icono" aria-hidden="true"><Icono nombre="alertas" tam={26} /></span>
+        <div>
+          <h2>{a.titulo}</h2>
+          <p className="cabecera-meta">
+            <span>#{a.id}</span>
+            <span>Desde: <b>{fechaHora(a.inicio)}</b></span>
+            <span>{a.activa ? "El sistema la sigue detectando" : <>Terminó: <b>{fechaHora(a.fin)}</b></>}</span>
+            <span className={`pastilla nivel-${a.nivel}`}><i />{NIVEL[a.nivel]}</span>
+            <span className={`pastilla ${CLASE_ESTADO[a.estado]}`}>{a.estado === "cerrada" ? `Cerrada: ${a.resultado_nombre}` : ESTADOS[a.estado]}</span>
+          </p>
         </div>
-      )}
-      {abierta && !puede && <p className="nota">Solo el operador técnico y el administrador atienden las alertas.</p>}
+      </section>
 
-      <h3 className="subtitulo">Historial</h3>
-      <ol className="historial">
-        {a.historial.map((h, i) => (
-          <li key={i} className={`h-${h.accion}`}>
-            <time>{fechaHora(h.fecha)}</time>
-            <span className="que"><b>{h.nombre ?? "Sistema"}</b> · {ACCIONES[h.accion] ?? h.accion}</span>
-            {h.texto && <span className="texto">{h.texto}</span>}
-          </li>
-        ))}
-      </ol>
-    </section>
+      <div className="detalle-columnas">
+        <div className="detalle-principal">
+          <section className="panel" aria-labelledby="que-paso">
+            <h3 id="que-paso" className="titulo-tarjeta">Qué pasó</h3>
+            {a.parametros && <p className="parametros"><b>Lecturas:</b> {a.parametros}.</p>}
+            {a.accion && <p className="accion-recomendada"><b>Qué hacer:</b> {a.accion}.</p>}
+            {a.nodos?.length > 0 && a.tipo !== "fuga" && (
+              <p className="nota">Ver el sensor: {a.nodos.map((n, i) => <span key={n}>{i ? ", " : ""}<a href={`#/sensor/${n}`}>{n}</a></span>)}</p>
+            )}
+            {!a.parametros && !a.accion && <p className="vacio">Sin más información sobre esta alerta.</p>}
+          </section>
+
+          {msj?.ok && <p className="mensaje ok" role="status">{msj.ok}</p>}
+          {msj?.error && <p className="mensaje error" role="alert">{msj.error}</p>}
+
+          {abierta && puede && (
+            <section className="panel atender" aria-labelledby="atenderla">
+              <h3 id="atenderla" className="titulo-tarjeta">Atender la alerta</h3>
+              {a.estado === "nueva" && (
+                <button className="boton primario" disabled={ocupado}
+                        onClick={() => hacer("reconocer", undefined, "Quedaste como responsable de esta alerta.")}>
+                  Reconocer y atender
+                </button>
+              )}
+              {deOtro && <p className="mensaje info">La atiende {a.responsable_nombre}. Puedes agregar observaciones.</p>}
+
+              <form className="formulario" onSubmit={async (e) => {
+                e.preventDefault();
+                if (await hacer("notas", { texto: nota }, "Observación agregada.")) setNota("");
+              }}>
+                <label className="campo">
+                  <span>Acciones realizadas y observaciones de campo</span>
+                  <textarea rows={3} value={nota} onChange={(e) => setNota(e.target.value)}
+                            placeholder="Ej.: se tomó muestra en la llave del parque; cloro residual 0,15 mg/L." />
+                </label>
+                <div className="acciones"><button className="boton" disabled={ocupado || nota.trim().length < 5}>Agregar observación</button></div>
+              </form>
+
+              {!deOtro && (
+                <form className="formulario cierre" onSubmit={async (e) => {
+                  e.preventDefault();
+                  await hacer("cerrar", cierre, "Alerta cerrada. Gracias: este resultado sirve para evaluar el modelo.");
+                }}>
+                  <fieldset>
+                    <legend>Cerrar la alerta: ¿qué se encontró?</legend>
+                    {RESULTADOS.map((r) => (
+                      <label key={r.valor} className={`opcion${cierre.resultado === r.valor ? " elegida" : ""}`}>
+                        <input type="radio" name="resultado" value={r.valor} checked={cierre.resultado === r.valor}
+                               onChange={() => setCierre({ ...cierre, resultado: r.valor })} />
+                        <span><b>{r.texto}</b><small>{r.ayuda}</small></span>
+                      </label>
+                    ))}
+                  </fieldset>
+                  <label className="campo">
+                    <span>Observaciones (obligatorias)</span>
+                    <textarea rows={3} value={cierre.observaciones} required
+                              onChange={(e) => setCierre({ ...cierre, observaciones: e.target.value })}
+                              placeholder="Qué se revisó, qué se encontró y qué se hizo." />
+                  </label>
+                  <div className="acciones">
+                    <button className="boton primario" disabled={ocupado || !cierre.resultado || cierre.observaciones.trim().length < 5}>
+                      Cerrar alerta
+                    </button>
+                  </div>
+                </form>
+              )}
+            </section>
+          )}
+          {abierta && !puede && <p className="nota">Solo el operador técnico y el administrador atienden las alertas.</p>}
+
+          <section className="panel" aria-labelledby="historial">
+            <h3 id="historial" className="titulo-tarjeta">Historial</h3>
+            <ol className="historial">
+              {a.historial.map((h, i) => (
+                <li key={i} className={`h-${h.accion}`}>
+                  <span className="historial-icono" aria-hidden="true">{(h.nombre ?? "S").trim()[0].toUpperCase()}</span>
+                  <div>
+                    <span className="que"><b>{h.nombre ?? "Sistema"}</b> · {ACCIONES[h.accion] ?? h.accion}</span>
+                    <time>{fechaHora(h.fecha)}</time>
+                    {h.texto && <span className="texto">{h.texto}</span>}
+                  </div>
+                </li>
+              ))}
+            </ol>
+          </section>
+        </div>
+
+        <aside className="detalle-ficha">
+          <section className="panel" aria-labelledby="ficha">
+            <h3 id="ficha" className="titulo-tarjeta">Datos de la alerta</h3>
+            <dl className="ficha">
+              {dato("Número", `#${a.id}`)}
+              {dato("Tipo", `${a.tipo_nombre}${a.evento && EVENTO[a.evento] && a.tipo !== "fuga" ? ` · ${EVENTO[a.evento]}` : ""}`)}
+              {dato("Dónde", a.lugar ?? "Toda la red")}
+              {dato("Prioridad", <span className={`pastilla nivel-${a.nivel}`}><i />{NIVEL[a.nivel]}</span>)}
+              {dato("Estado", <span className={`pastilla ${CLASE_ESTADO[a.estado]}`}>{a.estado === "cerrada" ? `Cerrada: ${a.resultado_nombre}` : ESTADOS[a.estado]}</span>)}
+              {dato("Probabilidad", pct(a.probabilidad))}
+              {/* si ya terminó, cuánto duró; si sigue, desde cuándo o con cuánta antelación se avisó */}
+              {a.activa || !a.fin
+                ? dato("Antelación", a.antelacion_h ? `${a.antelacion_h} h antes` : "Está ocurriendo")
+                : dato("Duró", duracion(a.inicio, a.fin))}
+              {dato("Desde", fechaHora(a.inicio))}
+              {!a.activa && a.fin && dato("Hasta", fechaHora(a.fin))}
+              {dato("Responsable", a.responsable_nombre ?? "Nadie todavía")}
+            </dl>
+          </section>
+        </aside>
+      </div>
+    </div>
   );
 }
 
 export default function GestionAlertas({ id, sesion, nodos, indicadores }) {
   const [f, setF] = useState({ estado: "pendientes", tipo: "", nodo: "", desde: "", hasta: "" });
   const q = new URLSearchParams(Object.entries(f).filter(([, v]) => v)).toString();
-  const lista = useConsulta(`/api/alertas?${q}`, 10000);
+  const lista = useConsulta(id ? null : `/api/alertas?${q}`, 10000);
   const cambiar = (k) => (e) => setF({ ...f, [k]: e.target.value });
   const filas = lista.datos ?? [];
+  const recargar = () => { lista.recargar(); indicadores.recargar(); };
 
+  if (id) return <Detalle id={id} yo={sesion.usuario} puede={sesion.permisos.atender_alertas} onCambio={recargar} />;
   return (
-    <div className={`gestion${id ? " con-detalle" : ""}`}>
-      <section className="panel lista-gestion" aria-label="Alertas">
+    <div className="gestion">
+      <Indicadores datos={indicadores.datos} />
+      <section className="panel lista-gestion" aria-labelledby="registro-alertas">
         <div className="panel-cabeza">
           <div>
-            <h2>Alertas</h2>
+            <h2 id="registro-alertas">Registro de alertas</h2>
             <p className="nota">Cada alarma, posible fuga, aviso anticipado o riesgo en 24 h queda aquí hasta que alguien la cierre.</p>
           </div>
         </div>
-        <Indicadores datos={indicadores.datos} />
         <div className="filtros filtros-alertas">
           <label className="campo"><span>Estado</span>
             <select value={f.estado} onChange={cambiar("estado")}>
@@ -363,14 +387,21 @@ export default function GestionAlertas({ id, sesion, nodos, indicadores }) {
         {lista.datos && !filas.length && (
           <p className="vacio">{f.estado === "pendientes" ? "No hay alertas pendientes." : "Ninguna alerta coincide con los filtros."}</p>
         )}
-        <ul className="lista-gestion-alertas">
-          {filas.map((a) => <Fila key={a.id} a={a} elegida={String(a.id) === String(id)} />)}
-        </ul>
-        {/* el F1 le sirve a quien evalúa el sistema: va después de la lista, que es lo que se viene a ver */}
-        <Rendimiento puede={sesion.permisos.atender_alertas} />
+        {filas.length > 0 && (
+          <div className="tabla-desplazable">
+            <table className="tabla tabla-alertas">
+              <caption className="solo-lector">Alertas, de la más reciente a la más antigua</caption>
+              <thead>
+                <tr><th scope="col">#</th><th scope="col">Alerta</th><th scope="col">Lugar</th><th scope="col">Inicio</th>
+                  <th scope="col">Prioridad</th><th scope="col">Estado</th><th scope="col">Responsable</th></tr>
+              </thead>
+              <tbody>{filas.map((a) => <Fila key={a.id} a={a} />)}</tbody>
+            </table>
+          </div>
+        )}
       </section>
-      <Detalle id={id} yo={sesion.usuario} puede={sesion.permisos.atender_alertas} filas={filas}
-               onCambio={() => { lista.recargar(); indicadores.recargar(); }} />
+      {/* el F1 le sirve a quien evalúa el sistema: va después del registro, que es lo que se viene a ver */}
+      <section className="panel"><Rendimiento puede={sesion.permisos.atender_alertas} /></section>
     </div>
   );
 }
