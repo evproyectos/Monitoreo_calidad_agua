@@ -186,7 +186,8 @@ termina ahora. Cada lectura trae también `fecha_datos`, su fecha original, y el
 lluvia observada y el pronóstico pasado en esa fecha (`fuentes_lluvia.ConLluvia` y
 `pronostico_lluvia.fijar_desfase`): son los que corresponden a lo que miden los sensores, y la
 lluvia de hoy no tendría nada que ver. Con sensores reales no llega `fecha_datos` y no se corre
-nada. La prueba alcanza para unas 16 semanas; después el emisor termina.
+nada. La prueba alcanza para unos 4 meses (de 117 a 123 días, según el día de la semana en que
+arranque); después el emisor termina.
 
 Si se detiene y se vuelve a arrancar días después, los días que faltaron llegan en la precarga y
 se procesan de una vez. Para volver al emisor acelerado (fechas de 2026, anteriores a lo ya
@@ -451,12 +452,30 @@ variables definidas en el sistema (por ejemplo con `setx`) tienen prioridad sobr
 - **Clave de API.** `POST /predict/contaminacion` pide una de las claves de `CLAVES_API` en el
   encabezado `X-API-Key`. Sin clave o con una equivocada responde 401 y anota el intento (fecha,
   origen, ruta y motivo, nunca la clave) en `registros/accesos_rechazados.log`. Sin ninguna clave
-  configurada responde 503, para que no quede abierto por olvido. En `/docs`, el botón
-  **Authorize** permite probarlo con la clave. El dashboard (`/api/...`) no usa la clave sino el
-  inicio de sesión (abajo); `/health` queda abierto para Docker y el monitoreo externo.
+  configurada responde 503, para que no quede abierto por olvido. El dashboard (`/api/...`) no
+  usa la clave sino el inicio de sesión (abajo).
+- **Documentación y `/health`.** `/docs`, `/redoc` y `/openapi.json` piden una sesión de
+  administrador en el tablero (o, `/openapi.json`, la clave de API); en `/docs` el botón
+  **Authorize** permite probar `/predict` con la clave. `/health` queda abierto para Docker y el
+  monitoreo externo, pero sin clave ni sesión de administrador solo dice el estado (`ok`,
+  `degradado` o `iniciando`); los problemas, la versión y los modelos se ven con la clave
+  (`curl -H "X-API-Key: …" …/health`) o con la sesión.
+- **Cabeceras y tamaño.** Cada respuesta lleva `Content-Security-Policy` (el tablero solo carga
+  recursos del propio servidor), `X-Frame-Options: DENY`, `X-Content-Type-Options`,
+  `Referrer-Policy` y, con HTTPS, `Strict-Transport-Security`, y no dice qué servidor es. Una
+  solicitud de más de 256 KB (16 MB en `/predict`, donde 8 días de lecturas son unos 4 MB)
+  recibe 413 sin procesarse, y los textos más largos que las columnas de la base (notas,
+  observaciones, nombres) reciben 422. El script en línea de `index.html` (el que pide los
+  primeros datos mientras baja el JavaScript) se autoriza por su huella SHA-256, que el servicio
+  calcula al arrancar.
+- **Dependencias.** Las versiones de `backend/requirements.txt` están fijas; antes de subir una,
+  `pip-audit -r backend/requirements.txt` (y `npm audit` en `frontend/`).
 - **HTTPS.** Con `CERTIFICADO_TLS` y `CLAVE_TLS` el servicio atiende solo por HTTPS, con TLS 1.2
   como versión mínima. Para usarlo en la propia máquina hay un certificado de prueba.
 - **Secretos en el repositorio.** El CI busca secretos en todo el historial con gitleaks.
+- **Base de datos.** Sin `POSTGRES_PASSWORD` en el `.env`, la base de Docker queda con la
+  contraseña `monitoreo`, que sirve solo en la propia máquina; en un servidor hay que poner una
+  larga (en `.env.ejemplo` está cómo generarla y cómo cambiarla en una base que ya existe).
 
 Desde `backend/`:
 
@@ -482,11 +501,18 @@ El dashboard pide correo y contraseña (CU-00). Cada usuario tiene un rol:
 - **El primer administrador** se crea desde la consola, en `backend/`:
   `python -m monitoreo.usuarios --crear-admin correo@asada.cr "Nombre Apellido"`. Los demás los
   crea él desde el dashboard, con una contraseña temporal que cada persona cambia al entrar.
-- **Contraseñas:** al menos 10 caracteres; se guarda solo su hash (scrypt con sal). Con 5
-  intentos fallidos seguidos, ese correo queda bloqueado 15 minutos. El mensaje de error es el
-  mismo si falla el correo o la contraseña.
+- **Contraseñas:** al menos 10 caracteres; se guarda solo su hash (scrypt con sal, N=2¹⁴, r=8,
+  p=5, una de las combinaciones de OWASP; los hashes viejos se rehacen solos al entrar). El
+  mensaje de error es el mismo si falla el correo o la contraseña, y tarda lo mismo: si el correo
+  no existe se calcula igual el hash.
+- **Intentos fallidos:** se limitan por origen (IP), no por cuenta, para que nadie pueda dejar
+  fuera a otra persona equivocándose a propósito con su correo. Con 5 fallos en 15 minutos para un
+  mismo correo, o 20 sumando todos los correos, ese origen espera 15 minutos; la persona dueña de
+  la cuenta sigue entrando desde su propio equipo. Cambiar la contraseña en **Mi cuenta** tiene el
+  mismo límite.
 - **Sesión:** cookie HttpOnly y SameSite=Strict (Secure con HTTPS) que vence a las 12 h. Al
-  desactivar a alguien o restablecer su contraseña se cierran sus sesiones abiertas. Nadie puede
+  desactivar a alguien o restablecer su contraseña se cierran sus sesiones abiertas, y al cambiar
+  la propia contraseña se cierran las demás (queda abierta solo la de ese momento). Nadie puede
   quitarse el rol de administrador a sí mismo, ni desactivar al último administrador activo.
 - **Dónde se guardan:** en `BASE_DE_DATOS` (PostgreSQL en Docker) o, sin ella, en
   `registros/usuarios.db` (SQLite). `BASE_USUARIOS` permite usar otra base.
@@ -547,7 +573,8 @@ base. Se ajusta con `RENDIMIENTO_DIAS` (7), `RENDIMIENTO_F1_MINIMO` (0,75) y
 
 | Ruta | Qué devuelve |
 |---|---|
-| `GET /health` | si el servicio está en pie (`ok` o `degradado` con el motivo), versión, y de cada modelo cargado su huella, la corrida de MLflow que lo generó (`run_id`, experimento y huella de los datos) y su versión en el Model Registry (`registro`, de `versiones.json` de la carpeta de modelos) |
+| `GET /health` | si el servicio está en pie (`ok`, `degradado` o `iniciando`). Con la clave de API o sesión de administrador, también el motivo, la versión, y de cada modelo cargado su huella, la corrida de MLflow que lo generó (`run_id`, experimento y huella de los datos) y su versión en el Model Registry (`registro`, de `versiones.json` de la carpeta de modelos) |
+| `GET /docs`, `/redoc`, `/openapi.json` | documentación de la API (sesión de administrador; `/openapi.json` también con la clave) |
 | `POST /predict/contaminacion` | requiere `X-API-Key`. Con las lecturas de 15 min de toda la red de las últimas 98 h (mismo formato que `POST /lecturas` de la API de datos): probabilidad de evento, tipo sugerido, pronóstico a 24 h y nivel verde, amarillo o rojo por sensor y para la red. 422 con el detalle si faltan columnas, lecturas o datos. El nivel amarillo empieza en `UMBRAL_AMARILLO` (0,5 por defecto) |
 | `POST /api/sesion` | inicia sesión con `{"correo", "contrasena"}`; deja la cookie. `GET` dice quién tiene la sesión (401 si nadie) y `DELETE` la cierra |
 | `POST /api/sesion/contrasena` | cambia la contraseña propia: `{"actual", "nueva"}` |

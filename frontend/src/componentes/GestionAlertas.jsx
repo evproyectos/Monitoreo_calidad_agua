@@ -97,7 +97,7 @@ function Rendimiento({ puede }) {
                 {Object.entries(TIPOS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
               </select></label>
             <label className="campo"><span>Dónde</span>
-              <input value={f.lugar} onChange={cambiar("lugar")} placeholder="Ej.: J224, calle de la escuela" /></label>
+              <input value={f.lugar} onChange={cambiar("lugar")} maxLength={300} placeholder="Ej.: J224, calle de la escuela" /></label>
             <label className="campo"><span>Cómo se supo</span>
               <select value={f.fuente} onChange={cambiar("fuente")} required>
                 <option value="">Elegir…</option>
@@ -105,7 +105,7 @@ function Rendimiento({ puede }) {
               </select></label>
           </div>
           <label className="campo"><span>Observaciones (obligatorias)</span>
-            <textarea rows={2} value={f.observaciones} onChange={cambiar("observaciones")} required
+            <textarea rows={2} value={f.observaciones} onChange={cambiar("observaciones")} required maxLength={1000}
                       placeholder="Ej.: muestra semanal del Ministerio con cloro residual de 0,1 mg/L." /></label>
           {msj?.error && <p className="mensaje error" role="alert">{msj.error}</p>}
           <div className="acciones">
@@ -256,7 +256,7 @@ function Detalle({ id, yo, puede, onCambio }) {
               }}>
                 <label className="campo">
                   <span>Acciones realizadas y observaciones de campo</span>
-                  <textarea rows={3} value={nota} onChange={(e) => setNota(e.target.value)}
+                  <textarea rows={3} value={nota} onChange={(e) => setNota(e.target.value)} maxLength={2000}
                             placeholder="Ej.: se tomó muestra en la llave del parque; cloro residual 0,15 mg/L." />
                 </label>
                 <div className="acciones"><button className="boton" disabled={ocupado || nota.trim().length < 5}>Agregar observación</button></div>
@@ -279,7 +279,7 @@ function Detalle({ id, yo, puede, onCambio }) {
                   </fieldset>
                   <label className="campo">
                     <span>Observaciones (obligatorias)</span>
-                    <textarea rows={3} value={cierre.observaciones} required
+                    <textarea rows={3} value={cierre.observaciones} required maxLength={1900}
                               onChange={(e) => setCierre({ ...cierre, observaciones: e.target.value })}
                               placeholder="Qué se revisó, qué se encontró y qué se hizo." />
                   </label>

@@ -13,14 +13,26 @@ Dónde se guardan
   notificaciones (cada alerta enviada por correo o Telegram, con sus destinatarios, CU-04 paso 5).
 
 Contraseñas
-  Nunca se guardan: se guarda su hash con scrypt (sal aleatoria por usuario). Mínimo 10
-  caracteres. Un usuario creado por el administrador recibe una contraseña temporal y debe
-  cambiarla al entrar por primera vez.
+  Nunca se guardan: se guarda su hash con scrypt (sal aleatoria por usuario; N=2^14, r=8, p=5, una
+  de las combinaciones que recomienda OWASP, con 16 MiB de memoria por cálculo). Los hashes con
+  otros parámetros se rehacen solos la siguiente vez que la persona entra. Mínimo 10 caracteres.
+  Un usuario creado por el administrador recibe una contraseña temporal y debe cambiarla al entrar
+  por primera vez.
 
 Sesiones
   Al iniciar sesión el navegador recibe una cookie HttpOnly y SameSite=Strict (Secure con HTTPS)
-  con un código aleatorio; en la base solo queda el SHA-256 de ese código. Vence a las 12 h. Con 5
-  intentos fallidos seguidos para el mismo correo, ese correo queda bloqueado 15 minutos.
+  con un código aleatorio; en la base solo queda el SHA-256 de ese código. Vence a las 12 h. Al
+  cambiar la propia contraseña se cierran las demás sesiones de esa persona.
+
+Intentos fallidos
+  Se limitan por origen (la dirección IP) y no por cuenta, para que nadie pueda dejar fuera a
+  otra persona equivocándose a propósito con su correo: 5 intentos fallidos en 15 minutos desde
+  un mismo origen para un mismo correo, o 20 desde un mismo origen sumando todos los correos (para
+  frenar a quien prueba una contraseña común contra muchas cuentas), y ese origen espera 15
+  minutos. Si el correo no existe se calcula igual el hash, para que el tiempo de respuesta no
+  revele qué correos tienen cuenta. Cambiar la propia contraseña tiene el mismo límite (5 intentos
+  con la actual equivocada). Detrás de un proxy hay que pasarle al servicio la IP real de cada
+  persona: si no, todos comparten el origen del proxy y el límite de 20 sería para todos juntos.
 
 El primer administrador se crea desde la consola (desde backend/):
     python -m monitoreo.usuarios --crear-admin correo@asada.cr "Nombre Apellido"
@@ -44,7 +56,9 @@ from sqlalchemy import (Boolean, Column, DateTime, Integer, MetaData, String, Ta
 ROLES = {"operador": "Operador técnico", "administrador": "Administrador", "junta": "Junta Directiva"}
 MINIMO_CONTRASENA = 10
 DURACION_SESION = timedelta(hours=12)
-INTENTOS_MAXIMOS, BLOQUEO_S = 5, 15 * 60
+INTENTOS_MAXIMOS, INTENTOS_POR_ORIGEN, BLOQUEO_S = 5, 20, 15 * 60
+SCRYPT = {"n": 2 ** 14, "r": 8, "p": 5}
+MAXIMO_CONTRASENA = 1024                    # más larga no la acepta la API (servicio.py)
 CORREO = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 
 meta = MetaData()
@@ -102,9 +116,9 @@ class ErrorUsuarios(Exception):
 
 
 # ---------------------------------------------------------------------------- contraseñas
-def hash_contrasena(contrasena, sal=None, n=2 ** 14, r=8, p=1):
+def hash_contrasena(contrasena, sal=None, n=SCRYPT["n"], r=SCRYPT["r"], p=SCRYPT["p"]):
     sal = sal or secrets.token_bytes(16)
-    h = hashlib.scrypt(contrasena.encode(), salt=sal, n=n, r=r, p=p, dklen=32)
+    h = hashlib.scrypt(contrasena.encode(), salt=sal, n=n, r=r, p=p, dklen=32, maxmem=256 * 1024 * 1024)
     b64 = lambda b: base64.b64encode(b).decode()               # noqa: E731
     return f"scrypt${n}${r}${p}${b64(sal)}${b64(h)}"
 
@@ -116,6 +130,62 @@ def verificar_contrasena(contrasena, guardado):
     except (ValueError, TypeError):
         return False
     return hmac.compare_digest(otro.split("$")[-1], h)
+
+
+def hash_viejo(guardado):
+    """Si el hash se hizo con otros parámetros de scrypt (hay que rehacerlo al entrar)."""
+    try:
+        _, n, r, p, _, _ = guardado.split("$")
+        return (int(n), int(r), int(p)) != (SCRYPT["n"], SCRYPT["r"], SCRYPT["p"])
+    except ValueError:
+        return True
+
+
+_FICTICIO = []
+
+
+def hash_ficticio():
+    """Un hash cualquiera, para calcular scrypt también cuando el correo no existe."""
+    if not _FICTICIO:
+        _FICTICIO.append(hash_contrasena(secrets.token_urlsafe(16)))
+    return _FICTICIO[0]
+
+
+class Intentos:
+    """Intentos fallidos recientes por clave (origen, o origen y correo), en memoria. Una clave
+    queda bloqueada al llegar a `maximo` fallos dentro de la ventana; los fallos viejos se olvidan."""
+
+    def __init__(self, ventana_s=BLOQUEO_S, tope=10_000):
+        self.ventana_s, self.tope = ventana_s, tope
+        self._fallos = {}                                        # clave -> [horas de cada fallo]
+        self._candado = threading.Lock()
+
+    def _vigentes(self, clave, ahora):
+        f = [t for t in self._fallos.get(clave, []) if ahora - t < self.ventana_s]
+        if f:
+            self._fallos[clave] = f
+        else:
+            self._fallos.pop(clave, None)
+        return f
+
+    def bloqueado(self, clave, maximo):
+        with self._candado:
+            return len(self._vigentes(clave, time.time())) >= maximo
+
+    def fallo(self, *claves):
+        ahora = time.time()
+        with self._candado:
+            if len(self._fallos) >= self.tope:                   # no crecer sin límite
+                for k in list(self._fallos):
+                    self._vigentes(k, ahora)
+                while len(self._fallos) >= self.tope:
+                    self._fallos.pop(next(iter(self._fallos)))
+            for clave in claves:
+                self._fallos.setdefault(clave, []).append(ahora)
+
+    def olvidar(self, clave):
+        with self._candado:
+            self._fallos.pop(clave, None)
 
 
 def validar_contrasena(contrasena):
@@ -139,8 +209,8 @@ class Usuarios:
         opciones = {"connect_args": {"check_same_thread": False}} if url.startswith("sqlite") else {}
         self.motor = create_engine(url, pool_pre_ping=True, **opciones)
         meta.create_all(self.motor)
-        self._fallos = {}                                        # correo -> (intentos, desde)
-        self._candado = threading.Lock()
+        self.intentos = Intentos()
+        hash_ficticio()                 # listo desde ya: ni el primer correo inexistente tarda distinto
 
     # ------------------------------------------------------------------ bitácora
     def anotar(self, accion, correo=None, detalle=None, origen=None, conexion=None):
@@ -235,49 +305,62 @@ class Usuarios:
             self.anotar("usuario_modificado", por, f"{u.correo}: {descripcion}", origen, c)
             return _publico(self._por_id(c, uid))
 
-    def cambiar_propia(self, uid, actual, nueva, origen=None):
-        with self.motor.begin() as c:
+    def cambiar_propia(self, uid, actual, nueva, origen=None, conservar=None):
+        """Cambia la propia contraseña y cierra las demás sesiones de la persona (deja abierta la
+        del código `conservar`, la que hizo el cambio)."""
+        clave = ("cambio", origen, uid)
+        if self.intentos.bloqueado(clave, INTENTOS_MAXIMOS):
+            raise ErrorUsuarios("Demasiados intentos fallidos. Espera 15 minutos y vuelve a intentarlo.", 429)
+        with self.motor.connect() as c:
             u = self._por_id(c, uid)
-            if not verificar_contrasena(actual or "", u.hash):
-                raise ErrorUsuarios("La contraseña actual no es correcta.", 403)
-            validar_contrasena(nueva)
-            if verificar_contrasena(nueva, u.hash):
-                raise ErrorUsuarios("La contraseña nueva debe ser distinta de la actual.")
+        if not verificar_contrasena(actual or "", u.hash):
+            self.intentos.fallo(clave)
+            raise ErrorUsuarios("La contraseña actual no es correcta.", 403)
+        validar_contrasena(nueva)
+        if verificar_contrasena(nueva, u.hash):
+            raise ErrorUsuarios("La contraseña nueva debe ser distinta de la actual.")
+        self.intentos.olvidar(clave)
+        with self.motor.begin() as c:
             c.execute(update(usuarios).where(usuarios.c.id == uid).values(hash=hash_contrasena(nueva),
                                                                           debe_cambiar=False))
-            self.anotar("contrasena_cambiada", u.correo, None, origen, c)
+            otras = sesiones.delete().where(sesiones.c.usuario_id == uid)
+            if conservar:
+                otras = otras.where(sesiones.c.codigo != _codigo(conservar))
+            cerradas = c.execute(otras).rowcount
+            self.anotar("contrasena_cambiada", u.correo,
+                        f"se cerraron {cerradas} sesiones abiertas en otros lugares" if cerradas else None, origen, c)
             return _publico(self._por_id(c, uid))
 
     # ------------------------------------------------------------------ sesiones
     def iniciar_sesion(self, correo, contrasena, origen=None):
         """Devuelve (código para la cookie, usuario). Mensaje genérico si algo no coincide (CU-00 4a)."""
         correo = (correo or "").strip().lower()
-        with self._candado:
-            intentos, desde = self._fallos.get(correo, (0, 0.0))
-            if intentos >= INTENTOS_MAXIMOS and time.time() - desde < BLOQUEO_S:
-                self.anotar("inicio_bloqueado", correo, None, origen)
-                raise ErrorUsuarios("Demasiados intentos fallidos. Espera 15 minutos y vuelve a intentarlo.", 429)
+        par, del_origen = ("par", origen, correo), ("origen", origen)
+        if self.intentos.bloqueado(par, INTENTOS_MAXIMOS) or self.intentos.bloqueado(del_origen, INTENTOS_POR_ORIGEN):
+            self.anotar("inicio_bloqueado", correo, None, origen)
+            raise ErrorUsuarios("Demasiados intentos fallidos. Espera 15 minutos y vuelve a intentarlo.", 429)
         # los rechazos se anotan en la bitácora fuera de la transacción (si no, se desharían)
         with self.motor.connect() as c:
             u = c.execute(select(usuarios).where(usuarios.c.correo == correo)).first()
-        if u is None or not verificar_contrasena(contrasena or "", u.hash):
-            with self._candado:
-                n, d = self._fallos.get(correo, (0, 0.0))
-                self._fallos[correo] = (n + 1, time.time() if n + 1 >= INTENTOS_MAXIMOS else d)
+        # con un correo que no existe se calcula igual scrypt: el tiempo no dice si la cuenta existe
+        if not verificar_contrasena(contrasena or "", u.hash if u is not None else hash_ficticio()) or u is None:
+            self.intentos.fallo(par, del_origen)
             self.anotar("inicio_fallido", correo, None, origen)
             raise ErrorUsuarios("Correo o contraseña incorrectos.", 401)
         if not u.activo:                                     # CU-00 4b
             self.anotar("inicio_cuenta_inactiva", correo, None, origen)
             raise ErrorUsuarios("Tu cuenta está desactivada. Contacta al administrador de la ASADA.", 403)
+        self.intentos.olvidar(par)
         with self.motor.begin() as c:
-            with self._candado:
-                self._fallos.pop(correo, None)
             codigo = secrets.token_urlsafe(32)
             ahora = datetime.now()
             c.execute(sesiones.delete().where(sesiones.c.vence < ahora))
             c.execute(insert(sesiones).values(codigo=_codigo(codigo), usuario_id=u.id, creada=ahora,
                                               vence=ahora + DURACION_SESION))
-            c.execute(update(usuarios).where(usuarios.c.id == u.id).values(ultimo_acceso=ahora))
+            cambios = {"ultimo_acceso": ahora}
+            if hash_viejo(u.hash):                           # parámetros de scrypt de antes: se rehace
+                cambios["hash"] = hash_contrasena(contrasena)
+            c.execute(update(usuarios).where(usuarios.c.id == u.id).values(**cambios))
             self.anotar("inicio_sesion", correo, None, origen, c)
             return codigo, _publico(self._por_id(c, u.id))
 

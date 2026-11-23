@@ -47,8 +47,8 @@ function NuevoUsuario({ roles, minimo, onCreado, onCancelar }) {
       <h3>Nuevo usuario</h3>
       {error && <p className="mensaje error" role="alert">{error}</p>}
       <div className="campos">
-        <label className="campo"><span>Nombre</span><input value={f.nombre} onChange={cambiar("nombre")} autoFocus /></label>
-        <label className="campo"><span>Correo</span><input type="email" value={f.correo} onChange={cambiar("correo")} /></label>
+        <label className="campo"><span>Nombre</span><input value={f.nombre} onChange={cambiar("nombre")} maxLength={120} autoFocus /></label>
+        <label className="campo"><span>Correo</span><input type="email" value={f.correo} onChange={cambiar("correo")} maxLength={254} /></label>
         <label className="campo">
           <span>Rol</span>
           <select value={f.rol} onChange={cambiar("rol")}>

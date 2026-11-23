@@ -9,7 +9,16 @@ Clave de API
   endpoint no queda abierto por olvido.
   El dashboard (/, /api/...) y /health no piden clave: los usa el navegador, que no puede
   guardar una clave en secreto. /api/... pide en cambio una sesión de usuario con su rol
-  (monitoreo/usuarios.py); /health queda abierto para Docker y el monitoreo externo.
+  (monitoreo/usuarios.py). /health queda abierto para Docker y el monitoreo externo, pero sin
+  clave ni sesión de administrador solo dice el estado (ok, degradado o iniciando): los problemas,
+  los modelos y sus corridas de MLflow son para el administrador o con la clave. La documentación
+  (/docs, /redoc, /openapi.json) también: sesión de administrador o clave.
+
+Cabeceras y tamaño (servicio.Proteccion)
+  Cada respuesta lleva Content-Security-Policy (solo recursos del propio servidor), X-Frame-Options
+  DENY, X-Content-Type-Options, Referrer-Policy y, con HTTPS, Strict-Transport-Security; no dice
+  qué servidor es (sin "server: uvicorn"). Una solicitud de más de 256 KB (16 MB en /predict)
+  recibe 413 sin llegar a procesarse.
 
 HTTPS
   Con CERTIFICADO_TLS y CLAVE_TLS (rutas a archivos PEM) el servicio atiende solo por HTTPS, con
@@ -48,6 +57,11 @@ def claves_configuradas():
     return [c.strip() for c in os.environ.get("CLAVES_API", "").split(",") if c.strip()]
 
 
+def clave_valida(clave):
+    """Si `clave` es una de las de CLAVES_API (comparación en tiempo constante)."""
+    return bool(clave) and any(hmac.compare_digest(clave.encode(), v.encode()) for v in claves_configuradas())
+
+
 class RegistroAccesos:
     """Intentos rechazados: fecha, origen, ruta y motivo (nunca la clave que se mandó)."""
 
@@ -74,7 +88,7 @@ def exigir_clave(registro):
         if not validas:
             raise HTTPException(503, {"error": "El servicio no tiene claves de API configuradas.",
                                       "detalles": ["el administrador debe definir CLAVES_API en el .env"]})
-        if clave and any(hmac.compare_digest(clave.encode(), v.encode()) for v in validas):
+        if clave_valida(clave):
             return
         registro.anotar(request, "sin clave" if not clave else "clave inválida")
         raise HTTPException(401, {"error": "Clave de API ausente o inválida.",
@@ -97,7 +111,7 @@ def servidor(app, host, puerto, certificado=None, clave=None, **opciones):
                 raise SystemExit(f"No se encontró {ruta} ({nombre}). Para pruebas se puede generar con:\n"
                                  "  python -m monitoreo.seguridad --certificado")
         tls = {"ssl_certfile": str(certificado), "ssl_keyfile": str(clave)}
-    config = uvicorn.Config(app, host=host, port=puerto, **tls, **opciones)
+    config = uvicorn.Config(app, host=host, port=puerto, server_header=False, **tls, **opciones)
     config.load()
     if config.ssl is not None:
         config.ssl.minimum_version = TLS_MINIMO

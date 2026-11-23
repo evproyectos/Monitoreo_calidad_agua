@@ -52,6 +52,84 @@ def test_inicio_de_sesion_mensaje_generico_y_bloqueo(cuentas):
     assert "inicio_bloqueado" in acciones and acciones.count("inicio_fallido") == us.INTENTOS_MAXIMOS + 1
 
 
+def test_el_bloqueo_es_por_origen_y_no_deja_fuera_al_dueno_de_la_cuenta(cuentas):
+    """Equivocarse a propósito con el correo de otro solo bloquea a quien lo hace (su origen)."""
+    cuentas.crear("Ana", "ana@asada.cr", "operador", CLAVE)
+    for _ in range(us.INTENTOS_MAXIMOS):
+        with pytest.raises(us.ErrorUsuarios):
+            cuentas.iniciar_sesion("ana@asada.cr", "equivocada-123", origen="10.0.0.66")
+    with pytest.raises(us.ErrorUsuarios) as e:
+        cuentas.iniciar_sesion("ana@asada.cr", CLAVE, origen="10.0.0.66")
+    assert e.value.codigo == 429
+    codigo, u = cuentas.iniciar_sesion("ana@asada.cr", CLAVE, origen="10.0.0.5")    # Ana, desde su casa
+    assert u["correo"] == "ana@asada.cr" and codigo
+
+
+def test_muchos_correos_desde_un_origen_tambien_se_frenan(cuentas):
+    """Probar una contraseña común contra muchas cuentas: a los 20 fallos el origen espera."""
+    for i in range(us.INTENTOS_POR_ORIGEN):
+        with pytest.raises(us.ErrorUsuarios) as e:
+            cuentas.iniciar_sesion(f"u{i}@asada.cr", "Verano2026!", origen="10.0.0.66")
+        assert e.value.codigo == 401
+    with pytest.raises(us.ErrorUsuarios) as e:
+        cuentas.iniciar_sesion("otro@asada.cr", "Verano2026!", origen="10.0.0.66")
+    assert e.value.codigo == 429
+
+
+def test_los_intentos_viejos_se_olvidan_y_la_memoria_tiene_tope():
+    i = us.Intentos(ventana_s=0.05, tope=3)
+    i.fallo("a"), i.fallo("a")
+    assert i.bloqueado("a", 2)
+    import time
+    time.sleep(0.06)
+    assert not i.bloqueado("a", 2)
+    for k in "bcdef":
+        i.fallo(k)
+    assert len(i._fallos) <= 3
+
+
+def test_correo_inexistente_tambien_calcula_el_hash(cuentas, monkeypatch):
+    """Si no se calculara scrypt para un correo que no existe, el tiempo de respuesta lo delataría."""
+    calculados = []
+    original = us.verificar_contrasena
+    monkeypatch.setattr(us, "verificar_contrasena", lambda c, g: calculados.append(g) or original(c, g))
+    with pytest.raises(us.ErrorUsuarios):
+        cuentas.iniciar_sesion("nadie@asada.cr", "equivocada-123")
+    assert calculados == [us.hash_ficticio()]
+
+
+def test_hash_con_parametros_viejos_se_rehace_al_entrar(cuentas):
+    u = cuentas.crear("Ana", "ana@asada.cr", "operador", CLAVE, debe_cambiar=False)
+    viejo = us.hash_contrasena(CLAVE, n=2 ** 14, r=8, p=1)                # los parámetros de antes
+    with cuentas.motor.begin() as c:
+        c.execute(us.usuarios.update().where(us.usuarios.c.id == u["id"]).values(hash=viejo))
+    assert us.hash_viejo(viejo) and not us.hash_viejo(us.hash_contrasena(CLAVE))
+    cuentas.iniciar_sesion("ana@asada.cr", CLAVE)
+    with cuentas.motor.connect() as c:
+        nuevo = c.execute(us.usuarios.select()).first().hash
+    assert nuevo != viejo and not us.hash_viejo(nuevo) and us.verificar_contrasena(CLAVE, nuevo)
+
+
+def test_cambiar_la_contrasena_cierra_las_demas_sesiones(cuentas):
+    ana = cuentas.crear("Ana", "ana@asada.cr", "operador", CLAVE, debe_cambiar=False)
+    aqui, _ = cuentas.iniciar_sesion("ana@asada.cr", CLAVE)
+    otra, _ = cuentas.iniciar_sesion("ana@asada.cr", CLAVE)                # p. ej. alguien con la clave robada
+    cuentas.cambiar_propia(ana["id"], CLAVE, "otra-clave-larga-2", conservar=aqui)
+    assert cuentas.de_sesion(aqui)["id"] == ana["id"] and cuentas.de_sesion(otra) is None
+    assert "se cerraron 1 sesiones" in cuentas.ver_bitacora()[0]["detalle"]
+
+
+def test_cambiar_la_contrasena_tambien_limita_los_intentos(cuentas):
+    ana = cuentas.crear("Ana", "ana@asada.cr", "operador", CLAVE, debe_cambiar=False)
+    for _ in range(us.INTENTOS_MAXIMOS):
+        with pytest.raises(us.ErrorUsuarios) as e:
+            cuentas.cambiar_propia(ana["id"], "no-es-esta-1", "otra-clave-larga-2", origen="10.0.0.66")
+        assert e.value.codigo == 403
+    with pytest.raises(us.ErrorUsuarios) as e:
+        cuentas.cambiar_propia(ana["id"], CLAVE, "otra-clave-larga-2", origen="10.0.0.66")
+    assert e.value.codigo == 429
+
+
 def test_cuenta_inactiva_y_sesion_cerrada_al_desactivar(cuentas):
     admin = cuentas.crear("Admin", "admin@asada.cr", "administrador", CLAVE, debe_cambiar=False)
     ana = cuentas.crear("Ana", "ana@asada.cr", "operador", CLAVE)
@@ -229,3 +307,26 @@ def test_correo_de_prueba_por_la_api(api_correo):
                                "remitente": "alertas@asada.cr"}
     assert datos["ultimas"][0]["estado"] == "enviada" and datos["ultimas"][0]["nivel"] == "prueba"
     assert datos["ultimas"][0]["destinatarios"] == "admin@asada.cr"
+
+
+def test_cambiar_la_contrasena_por_la_api_deja_abierta_esta_sesion(api, tmp_path):
+    entrar(api, "beto@asada.cr")
+    cuentas = us.Usuarios(configuracion(tmp_path, inicio_sesion=True).base_usuarios)
+    otra, _ = cuentas.iniciar_sesion("beto@asada.cr", CLAVE)
+    r = api.post("/api/sesion/contrasena", json={"actual": CLAVE, "nueva": "otra-clave-larga-2"})
+    assert r.status_code == 200
+    assert api.get("/api/estado").status_code == 200                      # la sesión que hizo el cambio sigue
+    api.cookies.clear()
+    api.cookies.set(srv.COOKIE, otra)                                     # la que se abrió en otro lado
+    assert api.get("/api/estado").status_code == 401
+
+
+def test_textos_mas_largos_que_la_base_dan_422_y_no_500(api):
+    entrar(api, "admin@asada.cr")
+    r = api.post("/api/alertas/1/notas", json={"texto": "x" * (srv.NOTA_MAX + 1)})
+    assert r.status_code == 422 and "texto: es demasiado largo" in r.json()["detail"]["detalles"]
+    r = api.post("/api/alertas/1/cerrar", json={"resultado": "confirmada", "observaciones": "x" * (srv.CIERRE_MAX + 1)})
+    assert r.status_code == 422
+    r = api.patch("/api/usuarios/2", json={"nombre": "N" * (srv.NOMBRE_MAX + 1)})
+    assert r.status_code == 422
+    assert api.post("/api/sesion", json={"correo": "a@b.cr", "contrasena": "x" * 2000}).status_code == 422

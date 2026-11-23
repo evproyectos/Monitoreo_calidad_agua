@@ -5,7 +5,9 @@ Al arrancar carga los modelos y deja corriendo, en segundo plano, el ciclo que c
 datos, pasa las lecturas al motor y procesa cada hora cerrada. Los endpoints solo leen el estado
 del motor.
 
-  GET /health                           si el servicio está en pie, versión y modelos cargados
+  GET /health                           si el servicio está en pie; con clave de API o sesión de administrador,
+                                        también los problemas, la versión y los modelos cargados
+  GET /docs, /redoc, /openapi.json      documentación de la API (sesión de administrador o clave de API)
   POST /predict/contaminacion           predicción a pedido con lecturas que manda el cliente (422 si faltan
                                         datos); pide la clave de API en el encabezado X-API-Key (401 sin ella)
   POST /predict/fugas                   lo mismo para fugas: probabilidad, alarma, tramo y caudal de más
@@ -28,19 +30,25 @@ Con CERTIFICADO_TLS y CLAVE_TLS en el .env atiende solo por HTTPS (https://127.0
 
 import argparse
 import asyncio
+import base64
+import hashlib
+import json
 import os
+import re
 import threading
 import time
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 import pandas as pd
 from fastapi import Depends, FastAPI, HTTPException, Request, Response
 from fastapi.exceptions import RequestValidationError
+from fastapi.openapi.docs import get_redoc_html, get_swagger_ui_html
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from starlette.concurrency import run_in_threadpool
 
 from calidad_agua import calidad, metas
@@ -65,49 +73,152 @@ DIST = RAIZ / "frontend" / "dist"
 COOKIE = "sesion"
 CACHE_SESION_S = 10             # cuánto se recuerda una sesión sin volver a consultar la base
 
+# ---------------------------------------------------------------------------- cabeceras y tamaño (RNF-004)
+LIMITE_CUERPO = 256 * 1024                  # lo más grande que manda el dashboard es una nota de 2000 caracteres
+LIMITE_CUERPO_PREDICT = 16 * 1024 * 1024    # /predict/fugas: 8 días de lecturas de toda la red son ~4,2 MB
+CSP = ("default-src 'self'; script-src 'self'{scripts}; style-src 'self'; img-src 'self' data:; "
+       "font-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'; "
+       "frame-ancestors 'none'")
+# Swagger UI y ReDoc (FastAPI) se cargan de cdn.jsdelivr.net y llevan un script en la página
+CSP_DOCS = ("default-src 'self'; script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; "
+            "style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://fonts.googleapis.com; "
+            "img-src 'self' data: https://fastapi.tiangolo.com https://cdn.redoc.ly; "
+            "font-src 'self' https://fonts.gstatic.com; worker-src 'self' blob:; connect-src 'self'; "
+            "object-src 'none'; base-uri 'none'; frame-ancestors 'none'")
+CABECERAS = [(b"x-content-type-options", b"nosniff"), (b"x-frame-options", b"DENY"),
+             (b"referrer-policy", b"same-origin"), (b"cross-origin-opener-policy", b"same-origin"),
+             (b"permissions-policy", b"camera=(), microphone=(), geolocation=(), payment=()")]
+
+
+def csp_del_tablero(index_html):
+    """
+    La CSP con la huella (SHA-256) de cada script en línea de index.html: el que pide la sesión y
+    los primeros datos mientras baja el JavaScript (RNF-001). Así ese script corre y cualquier otro
+    script en línea (uno inyectado, por ejemplo) no. Se calcula del archivo compilado, de modo que
+    sigue valiendo si el script cambia. Los saltos de línea van como LF, igual que los cuenta el
+    navegador, aunque el archivo tenga CRLF (git en Windows).
+    """
+    try:
+        html = Path(index_html).read_text(encoding="utf-8")
+    except OSError:
+        html = ""
+    html = html.replace("\r\n", "\n").replace("\r", "\n")
+    huellas = [base64.b64encode(hashlib.sha256(s.encode()).digest()).decode()
+               for s in re.findall(r"<script>(.*?)</script>", html, flags=re.S)]
+    return CSP.format(scripts="".join(f" 'sha256-{h}'" for h in huellas))
+
+
+class Proteccion:
+    """
+    Middleware ASGI (va por fuera de todo lo demás): agrega las cabeceras de seguridad a cada
+    respuesta y corta con 413 una solicitud más grande que el límite. Si trae Content-Length se
+    decide con eso (el servidor no deja pasar más bytes de los que dice); si llega por partes
+    (chunked) se juntan hasta el límite y, si lo pasa, se corta sin leer el resto.
+    """
+
+    def __init__(self, app, https=False, csp=None):
+        self.app, self.https, self.csp = app, https, csp or CSP.format(scripts="")
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] != "http":
+            return await self.app(scope, receive, send)
+        ruta = scope["path"]
+        limite = LIMITE_CUERPO_PREDICT if ruta.startswith("/predict/") else LIMITE_CUERPO
+        csp = CSP_DOCS if ruta in ("/docs", "/redoc") else self.csp
+        extra = [*CABECERAS, (b"content-security-policy", csp.encode())]
+        if self.https:
+            extra.append((b"strict-transport-security", b"max-age=31536000"))
+
+        async def enviar(m):
+            if m["type"] == "http.response.start":
+                propias = {k.lower() for k, _ in m.get("headers", [])}
+                m["headers"] = [*m.get("headers", []), *[(k, v) for k, v in extra if k not in propias]]
+            await send(m)
+
+        async def demasiado_grande():
+            error = f"La solicitud es demasiado grande (máximo {limite // 1024} KB)."
+            cuerpo = json.dumps({"detail": {"error": error}}, ensure_ascii=False).encode()
+            await enviar({"type": "http.response.start", "status": 413,
+                          "headers": [(b"content-type", b"application/json"),
+                                      (b"content-length", str(len(cuerpo)).encode())]})
+            await enviar({"type": "http.response.body", "body": cuerpo})
+
+        cabeceras = dict(scope.get("headers", []))
+        largo = cabeceras.get(b"content-length", b"")
+        if largo.isdigit():
+            if int(largo) > limite:
+                return await demasiado_grande()
+            return await self.app(scope, receive, enviar)
+        if b"chunked" not in cabeceras.get(b"transfer-encoding", b"").lower():
+            return await self.app(scope, receive, enviar)
+        partes, total = [], 0
+        while True:
+            m = await receive()
+            partes.append(m)
+            if m["type"] != "http.request":
+                break
+            total += len(m.get("body", b""))
+            if total > limite:
+                return await demasiado_grande()
+            if not m.get("more_body"):
+                break
+
+        async def repetir():
+            return partes.pop(0) if partes else await receive()
+
+        await self.app(scope, repetir, enviar)
+
 
 # ---------------------------------------------------------------------------- sesiones (CU-00, CU-07)
+# Largos máximos: los de las columnas de la base (en PostgreSQL un texto más largo no se guarda) y,
+# para las contraseñas, un tope que deja de sobra cualquier contraseña real.
+CORREO_MAX, NOMBRE_MAX, CONTRASENA_MAX = 254, 120, usuarios_.MAXIMO_CONTRASENA
+NOTA_MAX = 2000                 # alertas_historial.texto
+CIERRE_MAX = 1900               # va en el mismo texto, después del resultado ("Falso positivo. …")
+NO_DETECTADO_MAX = 1000         # no_detectados.observaciones
+
+
 class Credenciales(BaseModel):
-    correo: str
-    contrasena: str
+    correo: str = Field(max_length=CORREO_MAX)
+    contrasena: str = Field(max_length=CONTRASENA_MAX)
 
 
 class CambioContrasena(BaseModel):
-    actual: str
-    nueva: str
+    actual: str = Field(max_length=CONTRASENA_MAX)
+    nueva: str = Field(max_length=CONTRASENA_MAX)
 
 
 class UsuarioNuevo(BaseModel):
-    nombre: str
-    correo: str
-    rol: str
-    contrasena: str
+    nombre: str = Field(max_length=NOMBRE_MAX)
+    correo: str = Field(max_length=CORREO_MAX)
+    rol: str = Field(max_length=20)
+    contrasena: str = Field(max_length=CONTRASENA_MAX)
 
 
 class CambiosUsuario(BaseModel):
-    nombre: str | None = None
-    rol: str | None = None
+    nombre: str | None = Field(default=None, max_length=NOMBRE_MAX)
+    rol: str | None = Field(default=None, max_length=20)
     activo: bool | None = None
     notificar_rojo: bool | None = None
     notificar_amarillo: bool | None = None
-    contrasena: str | None = None
+    contrasena: str | None = Field(default=None, max_length=CONTRASENA_MAX)
 
 
 class Nota(BaseModel):
-    texto: str
+    texto: str = Field(max_length=NOTA_MAX)
 
 
 class Cierre(BaseModel):
-    resultado: str
-    observaciones: str
+    resultado: str = Field(max_length=20)
+    observaciones: str = Field(max_length=CIERRE_MAX)
 
 
 class NoDetectado(BaseModel):
-    fecha: str
-    tipo: str
-    lugar: str | None = None
-    fuente: str
-    observaciones: str
+    fecha: str = Field(max_length=40)
+    tipo: str = Field(max_length=20)
+    lugar: str | None = Field(default=None, max_length=300)
+    fuente: str = Field(max_length=20)
+    observaciones: str = Field(max_length=NO_DETECTADO_MAX)
 
 
 SIN_SESION = {"id": 0, "nombre": "Sin inicio de sesión", "correo": None, "rol": "administrador",
@@ -212,7 +323,8 @@ def _instalar_sesiones(app, cfg, cuentas):
         if not u["correo"]:
             raise HTTPException(400, {"error": "Sin inicio de sesión no hay contraseña que cambiar."})
         try:
-            nuevo = cuentas.cambiar_propia(u["id"], datos.actual, datos.nueva, origen(request))
+            nuevo = cuentas.cambiar_propia(u["id"], datos.actual, datos.nueva, origen(request),
+                                           conservar=request.cookies.get(COOKIE))
         except usuarios_.ErrorUsuarios as e:
             raise HTTPException(e.codigo, {"error": e.mensaje})
         olvidar()
@@ -244,6 +356,8 @@ def _instalar_sesiones(app, cfg, cuentas):
     @app.get("/api/bitacora")
     def ver_bitacora(limite: int = 100):
         return cuentas.ver_bitacora(max(1, min(limite, 500)))
+
+    return usuario_de
 
 
 def _instalar_gestion(app, gestion):
@@ -552,15 +666,24 @@ def crear_app(cfg=None):
         yield
         estado["s"].detener()
 
-    app = FastAPI(title="Monitoreo de calidad de agua", version=__version__, lifespan=ciclo_de_vida)
+    # la documentación no queda abierta: /docs, /redoc y /openapi.json van abajo, con sesión o clave
+    app = FastAPI(title="Monitoreo de calidad de agua", version=__version__, lifespan=ciclo_de_vida,
+                  docs_url=None, redoc_url=None, openapi_url=None)
     cuentas = usuarios_.Usuarios(cfg.base_usuarios)
     if cfg.inicio_sesion and not cuentas.hay_usuarios():
         print("Todavía no hay usuarios del dashboard. Crea el primer administrador (desde backend/):\n"
               '  python -m monitoreo.usuarios --crear-admin correo@asada.cr "Nombre"', flush=True)
     gestion = gestion_.GestionAlertas(cfg.base_usuarios)
     rendimiento = rendimiento_.Rendimiento(gestion)
-    _instalar_sesiones(app, cfg, cuentas)
+    usuario_de = _instalar_sesiones(app, cfg, cuentas)
     _instalar_gestion(app, gestion)
+
+    def ve_detalle(request):
+        """El detalle de /health y la documentación: con una clave de API o con sesión de administrador."""
+        if seguridad.clave_valida(request.headers.get(seguridad.ENCABEZADO)):
+            return True
+        u = usuario_de(request)
+        return u is not None and u["rol"] == "administrador" and not u["debe_cambiar"]
 
     def hora_datos():
         """La última hora procesada (las alertas van con la hora de los datos), o la de ahora."""
@@ -575,6 +698,8 @@ def crear_app(cfg=None):
     # JavaScript pasa de ~230 KB a ~75 KB), y los archivos de assets/, que llevan un hash en el
     # nombre, se guardan en el navegador por un año: cambian de nombre cuando cambian.
     app.add_middleware(GZipMiddleware, minimum_size=1000)
+    app.add_middleware(Proteccion, https=bool(cfg.certificado_tls),      # el último agregado queda por fuera
+                       csp=csp_del_tablero(DIST / "index.html"))
 
     @app.middleware("http")
     async def guardar_assets(request: Request, call_next):
@@ -591,6 +716,7 @@ def crear_app(cfg=None):
                 "datetime_parsing": "no es una fecha válida", "datetime_type": "no es una fecha válida",
                 "list_type": "debe ser una lista", "dict_type": "debe ser un objeto",
                 "too_short": "no puede estar vacío", "json_invalid": "el cuerpo no es JSON válido",
+                "string_too_long": "es demasiado largo",
                 "model_attributes_type": "debe ser un objeto JSON", "string_type": "debe ser texto"}
 
     @app.exception_handler(RequestValidationError)
@@ -610,15 +736,18 @@ def crear_app(cfg=None):
         return estado["s"]
 
     @app.get("/health")
-    def salud():
+    def salud(request: Request):
         """
         200 con estado "ok" si todo funciona, o "degradado" si el servicio está en pie pero no
         llegan datos o falla el pronóstico o la fuente de la lluvia. Mientras carga los
-        modelos el puerto todavía no responde. Para Docker y para monitoreo externo.
+        modelos el puerto todavía no responde. Para Docker y para monitoreo externo. Sin clave de
+        API ni sesión de administrador solo dice el estado; con ellas, también los problemas, la
+        versión y los modelos.
         """
+        detalle = ve_detalle(request)
         if "s" not in estado:
-            return JSONResponse(status_code=503, content={
-                "estado": "iniciando", "version": __version__, "detalle": "cargando los modelos"})
+            return JSONResponse(status_code=503, content={"estado": "iniciando", **(
+                {"version": __version__, "detalle": "cargando los modelos"} if detalle else {})})
         s = estado["s"]
         with s.candado:
             e = s.motor.estado()
@@ -641,6 +770,8 @@ def crear_app(cfg=None):
             problemas.append(f"modelos nuevos sin cargar: {s.error_recarga}")
         if s.error_trabajadores:
             problemas.append(f"/predict en el proceso del servicio: {s.error_trabajadores}")
+        if not detalle:
+            return {"estado": "degradado" if problemas else "ok"}
         return {"estado": "degradado" if problemas else "ok", "problemas": problemas,
                 "version": __version__,
                 "modelos": {**con_registro(s.cfg.carpeta_modelos, m.version), "modo": m.modo,
@@ -789,6 +920,27 @@ def crear_app(cfg=None):
         s = servicio()
         return {"norma": calidad.NORMA, "tolerancia": metas.TOLERANCIA, "meta_pct": metas.META_PCT,
                 "umbral_detector": s.motor.modelos.umbral, "confirmar_h": s.motor.modelos.confirmar_h}
+
+    def solo_con_detalle(request):
+        if not ve_detalle(request):
+            raise HTTPException(401, {"error": "La documentación de la API es para el administrador: inicia sesión en "
+                                               "el tablero con una cuenta de administrador, o pide /openapi.json "
+                                               f"con la clave de API en el encabezado {seguridad.ENCABEZADO}."})
+
+    @app.get("/openapi.json", include_in_schema=False)
+    def esquema_api(request: Request):
+        solo_con_detalle(request)
+        return JSONResponse(app.openapi())
+
+    @app.get("/docs", include_in_schema=False)
+    def documentacion(request: Request):
+        solo_con_detalle(request)
+        return get_swagger_ui_html(openapi_url="/openapi.json", title=f"{app.title} · API")
+
+    @app.get("/redoc", include_in_schema=False)
+    def documentacion_redoc(request: Request):
+        solo_con_detalle(request)
+        return get_redoc_html(openapi_url="/openapi.json", title=f"{app.title} · API")
 
     if DIST.exists():
         app.mount("/assets", StaticFiles(directory=DIST / "assets"), name="assets")
