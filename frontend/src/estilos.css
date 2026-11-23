@@ -795,4 +795,184 @@ p.nota { margin: 4px 0 0; }
   .mapa-tramo .pron-corto { display: inline; }
   .mapa-etq { font-size: 11px; gap: 4px; }
 }
+/* ---------------------------------------------------------------- vista sencilla */
+/* El inicio, un lugar y la página Lugares (Inicio.jsx, Lugar.jsx, Lugares.jsx): el estado en
+   palabras con los colores del semáforo. Cada .tono-* define --t (texto), --tf (fondo) y --tp
+   (el color lleno, para bordes). */
+.tono-normal { --t: var(--normal); --tf: var(--normal-fondo); --tp: var(--normal-punto); }
+.tono-atencion { --t: var(--atencion); --tf: var(--atencion-fondo); --tp: var(--atencion-punto); }
+.tono-alarma { --t: var(--alarma); --tf: var(--alarma-fondo); --tp: var(--alarma-punto); }
+.tono-sin-dato { --t: var(--tinta-2); --tf: var(--rejilla); --tp: var(--sin-dato); }
+
+a.boton { display: inline-flex; align-items: center; justify-content: center; text-decoration: none; }
+.boton.grande { min-height: 48px; padding: 10px 22px; font-size: 16px; }
+
+.estado-lugar {
+  display: inline-flex; align-items: center; justify-content: center; gap: 6px; flex: none; width: 108px;
+  padding: 4px 10px; border-radius: 999px; background: var(--tf); color: var(--t); font-size: 13px; font-weight: 600;
+}
+.chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.chip { display: inline-block; padding: 2px 10px; border-radius: 999px; background: var(--rejilla); color: var(--tinta-titulo); font-size: 13px; white-space: nowrap; }
+.chip.tono-atencion, .chip.tono-alarma, .chip.fuerte { background: var(--tf); color: var(--t); font-weight: 500; }
+.chip.fuerte { font-weight: 600; }
+
+.inicio { display: flex; flex-direction: column; gap: 24px; }
+.saludo-fila { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 4px 24px; }
+.saludo-fila h2 { font-size: 22px; font-weight: 600; color: var(--tinta); }
+.saludo-fila p { margin: 0; color: var(--tinta-2); }
+
+.veredicto { display: flex; flex-wrap: wrap; align-items: center; gap: 20px 40px; padding: 24px 28px; border-top: 4px solid var(--tp); }
+.veredicto-principal { display: flex; align-items: center; gap: 20px; flex: 1 1 420px; min-width: 0; }
+.veredicto-icono { flex: none; display: grid; place-items: center; width: 64px; height: 64px; border-radius: 50%; background: var(--tf); color: var(--t); }
+.veredicto h2 { font-size: 26px; font-weight: 600; color: var(--t); }
+.veredicto p { margin: 4px 0 0; font-size: 16px; color: var(--tinta); }
+.veredicto-datos { flex: 0 1 300px; display: flex; flex-direction: column; gap: 14px; }
+.veredicto-datos p { display: flex; gap: 12px; margin: 0; font-size: 14px; color: var(--tinta-2); }
+.veredicto-datos .icono { flex: none; margin-top: 1px; color: var(--primario); }
+.veredicto-datos b { display: block; font-weight: 500; color: var(--tinta); }
+.veredicto-accion { flex: 0 1 260px; display: flex; flex-direction: column; gap: 8px; text-align: center; color: var(--tinta-2); font-size: 13px; }
+.veredicto.compacto { padding: 20px; gap: 16px; }
+.veredicto.compacto .veredicto-icono { width: 48px; height: 48px; }
+.veredicto.compacto .veredicto-principal { gap: 14px; flex-basis: 260px; }
+.veredicto.compacto h2 { font-size: 20px; }
+.veredicto.compacto p { font-size: 15px; }
+
+.inicio-columnas {
+  display: grid; grid-template-columns: minmax(0, 2fr) minmax(280px, 1fr); grid-template-rows: auto 1fr;
+  grid-template-areas: "lugares atender" "lugares glosario"; gap: 24px; align-items: start;
+}
+.inicio-columnas > .lugares-inicio { grid-area: lugares; }
+.inicio-columnas > .para-atender { grid-area: atender; }
+.inicio-columnas > .glosario { grid-area: glosario; }
+.veredicto-datos a { color: var(--primario); font-weight: 500; }
+.titulo-con-nota { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 4px 12px; padding: 16px 20px; border-bottom: 1px solid var(--linea); }
+.titulo-con-nota .titulo-tarjeta, .medida-cabeza .titulo-tarjeta { margin: 0; padding: 0; border: 0; }
+.lugares-inicio, .para-atender { padding: 0; }
+.lugares-inicio ul, .para-atender ul, .afectados ul { list-style: none; margin: 0; padding: 0; }
+.lugares-inicio li { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; padding: 12px 20px; border-bottom: 1px solid var(--rejilla); }
+.lugares-inicio li:last-child { border-bottom: 0; }
+.lugares-inicio li > .icono { color: var(--sin-dato); }
+.lugar-nombre { flex: 1 1 180px; min-width: 0; display: flex; flex-direction: column; line-height: 1.3; color: var(--tinta); text-decoration: none; }
+.lugar-nombre b { font-weight: 500; font-size: 15px; }
+.lugar-nombre span { color: var(--tinta-2); font-size: 13px; }
+.lugar-nombre:hover b { color: var(--primario); text-decoration: underline; }
+
+.para-atender li { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; padding: 16px 20px; border-bottom: 1px solid var(--rejilla); }
+.para-atender h3 { font-size: 15px; font-weight: 600; }
+.para-atender h3 a { color: var(--tinta); text-decoration: none; }
+.para-atender h3 a:hover { color: var(--primario); text-decoration: underline; }
+.para-atender .nota { margin: 0; }
+.para-atender .nada { display: flex; align-items: center; gap: 8px; margin: 0; padding: 16px 20px; color: var(--normal); font-weight: 500; }
+.para-atender .vacio { margin: 0; padding: 16px 20px; }
+.insignia.suave { background: var(--atencion-punto); color: #1a1d21; }
+.enlace-mas { display: block; padding: 12px 20px; color: var(--primario); font-size: 14px; font-weight: 500; }
+.glosario p { margin: 8px 0 0; font-size: 14px; color: var(--tinta-2); }
+.glosario b { color: var(--tinta); font-weight: 500; }
+.enlace-detallada { margin: 0; color: var(--tinta-2); }
+.enlace-detallada a { color: var(--primario); font-weight: 500; }
+
+/* un lugar */
+.lugar { display: flex; flex-direction: column; gap: 16px; max-width: 1000px; }
+.lugar-zona { margin: -8px 0 0; color: var(--tinta-2); }
+.lugar-medidas { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 16px; }
+.medida-cabeza { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; margin-bottom: 14px; }
+.medida-cabeza h2 span { font-weight: 400; color: var(--tinta-2); font-size: 13px; }
+.nota-semana { margin: 0 0 8px; color: var(--tinta-2); }
+.grafico-semana { display: block; width: 100%; height: auto; }
+.grafico-semana .franja { fill: var(--normal-fondo); }
+.grafico-semana .linea { fill: none; stroke: var(--observado); stroke-width: 2; stroke-linejoin: round; }
+.grafico-semana text { font-size: 11px; fill: var(--tinta-2); font-family: inherit; }
+
+.medidor { display: flex; flex-direction: column; gap: 8px; }
+.medidor-barra { position: relative; height: 10px; border-radius: 5px; background: var(--alarma-fondo); }
+.medidor .zona { position: absolute; top: 0; bottom: 0; }
+.medidor .zona.bien { background: var(--normal-fondo); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--normal-punto) 35%, transparent); }
+.medidor .zona.aceptable { background: var(--atencion-fondo); }
+.medidor .marca-valor { position: absolute; top: -5px; width: 4px; height: 20px; margin-left: -2px; border-radius: 2px; background: var(--t); }
+.medidor-texto { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 4px 12px; font-size: 13px; color: var(--tinta-2); }
+.medidor-texto b { color: var(--tinta); font-weight: 600; }
+
+/* alerta en palabras (GestionAlertas.jsx) */
+.que-paso .explicacion { margin: 6px 0 12px; font-size: 16px; color: var(--tinta); }
+.que-paso .medidor { margin: 4px 0 8px; max-width: 520px; }
+.afectados h4 { margin: 16px 0 4px; font-size: 13px; font-weight: 600; color: var(--tinta-2); }
+.afectados li { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; padding: 8px 0; border-top: 1px solid var(--rejilla); }
+.pasos { list-style: none; counter-reset: paso; margin: 10px 0 0; padding: 0; display: flex; flex-direction: column; gap: 12px; }
+.pasos li { counter-increment: paso; display: flex; align-items: flex-start; gap: 12px; font-size: 15px; }
+.pasos li::before {
+  content: counter(paso); flex: none; display: grid; place-items: center; width: 28px; height: 28px; border-radius: 50%;
+  background: var(--boton); color: var(--sobre-boton); font-size: 14px; font-weight: 600;
+}
+.atender .boton.grande + .nota { margin: 6px 0 0; }
+
+/* Lugares (administrador) */
+.lugares-admin { display: flex; flex-direction: column; gap: 16px; max-width: 1000px; }
+.lugares-admin .intro { margin: 0; max-width: 700px; color: var(--tinta-2); }
+.panel.sin-relleno { padding: 0; }
+.tabla-lugares { min-width: 600px; }
+.tabla-lugares .codigo { width: 110px; color: var(--tinta-2); }
+.tabla-lugares input {
+  width: 100%; min-height: 40px; padding: 6px 10px; border: 1px solid var(--tuberia); border-radius: var(--radio);
+  background: var(--superficie); color: var(--tinta); font: inherit;
+}
+.pie-formulario { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; padding: 14px 20px; border-top: 1px solid var(--linea); }
+
+/* menú: lo que se despliega dentro de "Vista detallada" */
+.menu-sub { margin: 0 0 6px; padding: 0; }
+.menu-sub > li > a {
+  display: flex; align-items: center; min-height: 36px; padding: 6px 20px 6px 52px;
+  color: var(--menu-texto); text-decoration: none; font-size: 14px;
+}
+.menu-sub > li > a:hover { color: var(--menu-activo); }
+.menu-sub > li > a[aria-current] { color: var(--menu-activo); font-weight: 500; }
+.menu-sub .punto-menu { padding-left: 64px; }
+
+/* barra de abajo (teléfono y tableta): Inicio, Alertas y Más */
+.barra-inferior { display: none; }
+@media (max-width: 1099px) {
+  .barra-inferior {
+    position: fixed; left: 0; right: 0; bottom: 0; z-index: 22; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr));
+    height: calc(64px + env(safe-area-inset-bottom)); padding-bottom: env(safe-area-inset-bottom);
+    background: var(--superficie); box-shadow: 0 -1px 3px rgba(56, 65, 74, 0.18);
+  }
+  .barra-inferior a, .barra-inferior button {
+    display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; min-height: 44px;
+    border: 0; background: none; color: var(--tinta-2); font-size: 12px; text-decoration: none; cursor: pointer;
+  }
+  .barra-inferior [aria-current] { color: var(--primario); font-weight: 600; }
+  .barra-inferior .con-insignia { position: relative; display: inline-flex; }
+  .barra-inferior .con-insignia .insignia { position: absolute; top: -6px; left: 14px; margin: 0; }
+  .pagina { padding-bottom: calc(64px + env(safe-area-inset-bottom)); }
+  .campana { display: none; }
+}
+
+/* en una columna, lo que hay que atender va antes que la lista de lugares */
+@container contenido (max-width: 900px) {
+  .inicio-columnas { grid-template-columns: minmax(0, 1fr); grid-template-rows: none; grid-template-areas: "atender" "lugares" "glosario"; }
+}
+@media (max-width: 640px) {
+  .inicio { gap: 16px; }
+  .saludo-fila h2 { font-size: 19px; }
+  .veredicto { padding: 20px; gap: 16px; }
+  .veredicto-principal { flex-basis: 100%; gap: 14px; align-items: flex-start; }
+  .veredicto-icono { width: 48px; height: 48px; }
+  .veredicto-icono .icono { width: 26px; height: 26px; }
+  .veredicto h2 { font-size: 21px; }
+  .veredicto p { font-size: 15px; }
+  .veredicto-accion, .veredicto-datos { flex-basis: 100%; }
+  .lugares-inicio li { padding: 12px 16px; gap: 6px 12px; }
+  .lugares-inicio li .chips { order: 3; flex-basis: 100%; }
+  .estado-lugar { width: auto; min-width: 84px; }
+  .titulo-con-nota, .para-atender li, .enlace-mas, .para-atender .nada { padding-inline: 16px; }
+  /* Lugares: cada sensor como una tarjeta, con sus dos campos uno debajo del otro */
+  .tabla-lugares { min-width: 0; }
+  .tabla-lugares thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+  .tabla-lugares, .tabla-lugares tbody, .tabla-lugares tr, .tabla-lugares td { display: block; width: auto; }
+  .tabla-lugares tr { padding: 12px 16px; border-bottom: 1px solid var(--linea); }
+  .tabla-lugares td { padding: 4px 0; border: 0; }
+  .tabla-lugares td[data-etq]::before { content: attr(data-etq); display: block; margin-bottom: 2px; font-size: 13px; color: var(--tinta-2); }
+  .tabla-lugares .codigo { font-weight: 600; color: var(--tinta); }
+  .pie-formulario { padding-inline: 16px; }
+}
+
 @media (prefers-reduced-motion: reduce) { * { transition: none !important; animation: none !important; } }

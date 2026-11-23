@@ -1,6 +1,6 @@
 {
   "url": "http://127.0.0.1:8001",
-  "fecha": "2026-11-22T04:31:48.158Z",
+  "fecha": "2026-11-23T04:44:21.699Z",
   "pantalla": "teléfono 390 × 844",
   "red": "Fast 3G (562,5 ms, 1,44 Mbit/s bajada, 675 kbit/s subida)",
   "cpu": "4 veces más lento",
@@ -10,22 +10,22 @@
       "pagina": "Inicio de sesión",
       "ruta": "/",
       "lcp_ms": [
-        1952,
-        1960,
-        1964,
-        1972,
-        1984
+        1984,
+        2012,
+        2028,
+        2040,
+        2048
       ],
-      "lcp_mediana_ms": 1964,
-      "lcp_max_ms": 1984,
+      "lcp_mediana_ms": 2028,
+      "lcp_max_ms": 2048,
       "cumple": true,
       "elemento_lcp": "IMG",
       "fcp_ms": [
-        1868,
-        1868,
-        1848,
-        1852,
-        1864
+        1936,
+        1936,
+        1920,
+        1924,
+        1944
       ],
       "datos_en_pantalla_ms": [
         null,
@@ -34,67 +34,97 @@
         null,
         null
       ],
-      "kb_transferidos": 136
+      "kb_transferidos": 150
     },
     {
-      "pagina": "Vista general",
+      "pagina": "Inicio (vista sencilla)",
+      "ruta": "#/inicio",
+      "lcp_ms": [
+        2100,
+        2116,
+        2120,
+        2136,
+        2148
+      ],
+      "lcp_mediana_ms": 2120,
+      "lcp_max_ms": 2148,
+      "cumple": true,
+      "elemento_lcp": "P",
+      "fcp_ms": [
+        1916,
+        1928,
+        1904,
+        1924,
+        1928
+      ],
+      "datos_en_pantalla_ms": [
+        null,
+        null,
+        null,
+        null,
+        null
+      ],
+      "kb_transferidos": 179
+    },
+    {
+      "pagina": "Vista detallada",
       "ruta": "#/general",
       "lcp_ms": [
-        2068,
-        2084,
-        2104,
-        2104,
-        2116
+        2100,
+        2112,
+        2132,
+        2144,
+        2200
       ],
-      "lcp_mediana_ms": 2104,
-      "lcp_max_ms": 2116,
+      "lcp_mediana_ms": 2132,
+      "lcp_max_ms": 2200,
       "cumple": true,
       "elemento_lcp": "SPAN",
       "fcp_ms": [
-        1860,
-        1868,
-        1872,
-        1864,
-        1856
+        1960,
+        1952,
+        1916,
+        1948,
+        1948
       ],
       "datos_en_pantalla_ms": [
-        2066,
-        2067,
-        2042,
-        2062,
-        2025
+        2142,
+        2076,
+        2060,
+        2093,
+        2109
       ],
-      "kb_transferidos": 303
+      "kb_transferidos": 332
     },
     {
       "pagina": "Detalle de un sensor",
       "ruta": "#/sensor/J224",
       "lcp_ms": [
-        2080,
-        2096,
-        2116,
-        2124,
-        2128
+        2160,
+        2164,
+        2180,
+        2188,
+        2224
       ],
-      "lcp_mediana_ms": 2116,
-      "lcp_max_ms": 2128,
+      "lcp_mediana_ms": 2180,
+      "lcp_max_ms": 2224,
       "cumple": true,
       "elemento_lcp": "SPAN",
       "fcp_ms": [
-        1860,
-        1856,
-        1856,
-        1864,
-        1860
+        1964,
+        1944,
+        1940,
+        1920,
+        1936
       ],
       "datos_en_pantalla_ms": [
-        2085,
-        2082,
-        2039,
-        2077,
-        2054
+        2133,
+        2142,
+        2117,
+        2129,
+        2107
       ],
-      "kb_transferidos": 318
+      "kb_transferidos": 343
     }
   ]
 }

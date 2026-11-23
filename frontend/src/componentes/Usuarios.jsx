@@ -14,6 +14,7 @@ const ACCIONES = {
   cierre_sesion: "Cerró sesión",
   usuario_creado: "Creó un usuario",
   usuario_modificado: "Modificó un usuario",
+  lugares_modificados: "Cambió los nombres de los lugares",
   contrasena_cambiada: "Cambió su contraseña",
 };
 

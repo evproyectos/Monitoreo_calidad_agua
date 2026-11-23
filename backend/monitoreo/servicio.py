@@ -22,6 +22,7 @@ del motor.
   GET /api/rendimiento                  F1 de las alarmas en los últimos 7 días e historial diario (RNF-003)
   GET/POST /api/rendimiento/no-detectados  eventos que ocurrieron sin alerta (falsos negativos)
   GET /api/referencias                  norma, tolerancias de la meta y umbral del detector
+  GET/PUT /api/lugares                  nombre y zona de cada punto de medición (cambiarlos: administrador)
   GET /                                 dashboard (React, compilado en frontend/dist)
 
 Uso (desde backend/):  python -m monitoreo.servicio            → http://127.0.0.1:8001
@@ -56,6 +57,7 @@ from calidad_agua import calidad, metas
 from monitoreo import __version__, prediccion, seguridad
 from monitoreo import cursor as cursor_
 from monitoreo import fuentes_lluvia
+from monitoreo import lugares as lugares_
 from monitoreo import gestion as gestion_
 from monitoreo import rendimiento as rendimiento_
 from monitoreo import usuarios as usuarios_
@@ -213,6 +215,16 @@ class Cierre(BaseModel):
     observaciones: str = Field(max_length=CIERRE_MAX)
 
 
+class Lugar(BaseModel):
+    codigo: str = Field(max_length=40)
+    nombre: str = Field(max_length=lugares_.NOMBRE_MAX)
+    zona: str | None = Field(default=None, max_length=lugares_.ZONA_MAX)
+
+
+class NombresLugares(BaseModel):
+    lugares: list[Lugar] = Field(max_length=500)
+
+
 class NoDetectado(BaseModel):
     fecha: str = Field(max_length=40)
     tipo: str = Field(max_length=20)
@@ -283,6 +295,8 @@ def _instalar_sesiones(app, cfg, cuentas):
             if ruta.startswith(("/api/alertas/", "/api/rendimiento/")) and request.method == "POST" \
                     and not _permisos(u)["atender_alertas"]:
                 return error(403, "Solo el operador técnico y el administrador atienden las alertas.")
+            if ruta.startswith("/api/lugares") and request.method != "GET" and u["rol"] != "administrador":
+                return error(403, "Solo el administrador cambia los nombres de los lugares.")
             request.state.usuario = u
         return await call_next(request)
 
@@ -463,7 +477,7 @@ def _duracion(segundos):
 class Servicio:
     """El motor más el ciclo en segundo plano que lo alimenta desde la API de datos."""
 
-    def __init__(self, cfg, cuentas=None, gestion=None, rendimiento=None):
+    def __init__(self, cfg, cuentas=None, gestion=None, rendimiento=None, lugares=None):
         self.cfg = cfg
         self.motor = Motor(cfg)
         # la lluvia observada, de la fuente elegida con FUENTE_LLUVIA (RNF-009, fuentes_lluvia.py)
@@ -473,7 +487,8 @@ class Servicio:
         # son los usuarios marcados en la página Usuarios, y cada envío queda en la tabla notificaciones
         self.alertas = Alertas(destinatarios=cuentas.destinatarios if cuentas else None,
                                registro=cuentas.anotar_notificacion if cuentas else None, gestion=gestion,
-                               rendimiento=rendimiento)
+                               rendimiento=rendimiento,
+                               nombres=(lambda: lugares.nombres(self.motor.sensores)) if lugares else None)
         # cola de trabajo persistente (RNF-002): la API de datos guarda las lecturas y el cursor, la
         # última hora procesada; al reiniciar se sigue desde ahí (cursor.py)
         self.cursor = cursor_.Cursor(gestion.motor) if gestion is not None else None
@@ -651,7 +666,7 @@ def crear_app(cfg=None):
     async def ciclo_de_vida(_app):
         silenciar_cortes(asyncio.get_running_loop())
         print("Cargando modelos...")
-        estado["s"] = Servicio(cfg, cuentas, gestion, rendimiento)
+        estado["s"] = Servicio(cfg, cuentas, gestion, rendimiento, lugares)
         estado["s"].iniciar()
         print(f"Servicio de monitoreo listo · modo {cfg.modo_pronostico} · datos desde {cfg.url_datos}")
         al = estado["s"].alertas
@@ -674,6 +689,7 @@ def crear_app(cfg=None):
         print("Todavía no hay usuarios del dashboard. Crea el primer administrador (desde backend/):\n"
               '  python -m monitoreo.usuarios --crear-admin correo@asada.cr "Nombre"', flush=True)
     gestion = gestion_.GestionAlertas(cfg.base_usuarios)
+    lugares = lugares_.Lugares(cfg.base_usuarios)
     rendimiento = rendimiento_.Rendimiento(gestion)
     usuario_de = _instalar_sesiones(app, cfg, cuentas)
     _instalar_gestion(app, gestion)
@@ -920,6 +936,26 @@ def crear_app(cfg=None):
         s = servicio()
         return {"norma": calidad.NORMA, "tolerancia": metas.TOLERANCIA, "meta_pct": metas.META_PCT,
                 "umbral_detector": s.motor.modelos.umbral, "confirmar_h": s.motor.modelos.confirmar_h}
+
+    @app.get("/api/lugares")
+    def ver_lugares():
+        """Nombre y zona de cada punto de medición (vista sencilla). `propio`: lo puso el administrador."""
+        s = servicio()
+        return {"lugares": lugares.lista(s.motor.sensores), "nombre_max": lugares_.NOMBRE_MAX,
+                "zona_max": lugares_.ZONA_MAX}
+
+    @app.put("/api/lugares")
+    def guardar_lugares(datos: NombresLugares, request: Request):
+        """Para el administrador: cambia los nombres de los lugares (página Lugares)."""
+        s = servicio()
+        u = request.state.usuario
+        try:
+            nuevos = lugares.guardar([x.model_dump() for x in datos.lugares], s.motor.sensores, por=u["correo"])
+        except lugares_.ErrorLugares as e:
+            raise HTTPException(e.codigo, {"error": e.mensaje})
+        cuentas.anotar("lugares_modificados", u["correo"], f"{len(datos.lugares)} lugares", request.client.host
+                       if request.client else None)
+        return {"lugares": nuevos, "nombre_max": lugares_.NOMBRE_MAX, "zona_max": lugares_.ZONA_MAX}
 
     def solo_con_detalle(request):
         if not ve_detalle(request):

@@ -3,11 +3,12 @@ import Menu, { Icono } from "./Menu.jsx";
 
 // Estructura de cada página (estilo Velzon, variante "default"): menú a la izquierda, barra de
 // arriba con las alertas sin atender y quién tiene la sesión, la barra con el título de la página y
-// dónde está, el contenido y el pie. En pantallas angostas el menú queda escondido y lo abre el botón
-// de la barra; se cierra al elegir una vista, con Escape o tocando fuera, y mientras está abierto el
-// foco no sale de él.
+// dónde está, el contenido y el pie. En pantallas angostas el menú queda escondido y abajo hay una
+// barra con Inicio, Alertas y Más (que abre el menú); el menú se cierra al elegir una vista, con
+// Escape o tocando fuera, y mientras está abierto el foco no sale de él.
 
-const TITULOS = { general: "Toda la red", sensor: "Por sensor", alertas: "Alertas", usuarios: "Usuarios", cuenta: "Mi cuenta" };
+const TITULOS = { inicio: "Inicio", general: "Toda la red", sensor: "Por sensor", alertas: "Alertas", usuarios: "Usuarios",
+                  cuenta: "Mi cuenta", lugares: "Lugares" };
 
 function MenuUsuario({ sesion, onSalir, vista }) {
   const [abierto, setAbierto] = useState(false);
@@ -42,7 +43,7 @@ function MenuUsuario({ sesion, onSalir, vista }) {
 }
 
 export default function Estructura({ vista, sensor, sensores, norma, desactualizado, sesion, onSalir, sinAtender = 0,
-                                     pie, children }) {
+                                     nombres, pie, children }) {
   const [abierto, setAbierto] = useState(false);
   const boton = useRef(null);
   const nav = useRef(null);
@@ -78,7 +79,9 @@ export default function Estructura({ vista, sensor, sensores, norma, desactualiz
     };
   }, [abierto]);
 
-  const titulo = vista === "sensor" && sensor ? `Sensor ${sensor}` : TITULOS[vista] ?? "";
+  const titulo = vista === "sensor" && sensor ? `Sensor ${sensor}`
+    : vista === "lugar" ? (nombres?.[sensor]?.nombre ?? sensor ?? "") : TITULOS[vista] ?? "";
+  const detallada = vista === "general" || vista === "sensor";
   return (
     <div className="app">
       <Menu vista={vista} sensor={sensor} sensores={sensores} norma={norma} desactualizado={desactualizado}
@@ -88,11 +91,7 @@ export default function Estructura({ vista, sensor, sensores, norma, desactualiz
 
       <div className="pagina">
         <header className="barra-superior">
-          <button ref={boton} className="boton-menu abrir" aria-expanded={abierto} aria-controls="menu-principal"
-                  onClick={() => setAbierto(true)}>
-            <Icono nombre="menu" tam={22} /><span className="solo-lector">Abrir el menú</span>
-          </button>
-          <a href="#/general" className="barra-marca">ASADA La Lucha</a>
+          <a href="#/inicio" className="barra-marca">ASADA La Lucha</a>
           <div className="barra-derecha">
             <a href="#/alertas" className="campana"
                aria-label={sinAtender ? `Alertas: ${sinAtender} sin atender` : "Alertas: ninguna sin atender"}>
@@ -107,7 +106,9 @@ export default function Estructura({ vista, sensor, sensores, norma, desactualiz
           <h1>{titulo}</h1>
           <nav aria-label="Ubicación" className="migas">
             <ol>
-              <li><a href="#/general">ASADA La Lucha</a></li>
+              <li><a href="#/inicio">ASADA La Lucha</a></li>
+              {vista === "lugar" && <li><a href="#/inicio">Inicio</a></li>}
+              {detallada && <li><a href="#/general">Vista detallada</a></li>}
               {vista === "sensor" && <li><a href={`#/sensor/${sensor ?? ""}`}>Por sensor</a></li>}
               <li aria-current="page">{vista === "sensor" ? sensor : titulo}</li>
             </ol>
@@ -117,6 +118,23 @@ export default function Estructura({ vista, sensor, sensores, norma, desactualiz
         <main className="contenido">{children}</main>
         <footer className="pie-pagina">{pie}</footer>
       </div>
+
+      {/* teléfono y tableta: lo más usado a mano, abajo */}
+      <nav className="barra-inferior" aria-label="Navegación rápida">
+        <a href="#/inicio" aria-current={vista === "inicio" || vista === "lugar" ? "page" : undefined}>
+          <Icono nombre="inicio" tam={22} />Inicio
+        </a>
+        <a href="#/alertas" aria-current={vista === "alertas" ? "page" : undefined}
+           aria-label={sinAtender ? `Alertas: ${sinAtender} sin atender` : undefined}>
+          <span className="con-insignia"><Icono nombre="alertas" tam={22} />
+            {sinAtender > 0 && <span className="insignia" aria-hidden="true">{sinAtender > 99 ? "99+" : sinAtender}</span>}
+          </span>
+          Alertas
+        </a>
+        <button ref={boton} type="button" aria-expanded={abierto} aria-controls="menu-principal" onClick={() => setAbierto(true)}>
+          <Icono nombre="menu" tam={22} />Más
+        </button>
+      </nav>
     </div>
   );
 }

@@ -2,11 +2,14 @@ import { lazy, Suspense, useEffect, useState } from "react";
 import { useConsulta } from "./api.js";
 import Encabezado from "./componentes/Encabezado.jsx";
 import Estructura from "./componentes/Estructura.jsx";
+import Inicio from "./componentes/Inicio.jsx";
+import { ordenRed } from "./componentes/RedSensores.jsx";
 import Tarjetas from "./componentes/Tarjetas.jsx";
 import Alarmas from "./componentes/Alarmas.jsx";
 import AlertasActivas from "./componentes/AlertasActivas.jsx";
 import VistaGeneral, { HORAS } from "./componentes/VistaGeneral.jsx";
 import { alertasActivas, resumenRed } from "./estado.js";
+import { conNombres, mapaNombres } from "./sencillo.js";
 
 // Las vistas que no se abren al entrar se cargan cuando se piden (RNF-001: la primera carga en
 // Fast 3G trae solo la vista general; los gráficos llegan después).
@@ -14,17 +17,21 @@ const DetalleSensor = lazy(() => import("./componentes/DetalleSensor.jsx"));
 const Usuarios = lazy(() => import("./componentes/Usuarios.jsx"));
 const Cuenta = lazy(() => import("./componentes/Cuenta.jsx"));
 const GestionAlertas = lazy(() => import("./componentes/GestionAlertas.jsx"));
+const Lugar = lazy(() => import("./componentes/Lugar.jsx"));
+const Lugares = lazy(() => import("./componentes/Lugares.jsx"));
 const cargando = <p className="vacio">Cargando…</p>;
 
-// La vista vive en la dirección (#/general, #/fugas, #/sensor/J224 o #/alertas/12): así funcionan
-// el botón de atrás del navegador y los enlaces directos a un sensor o a una alerta (los del correo).
-// #/fugas es la vista general (el enlace de las alertas de fuga), que lleva al panel de fugas.
+// La vista vive en la dirección: así funcionan el botón de atrás del navegador y los enlaces directos
+// (los del correo). La vista sencilla: #/inicio (la portada) y #/lugar/J224. La vista detallada:
+// #/general, #/sensor/J224 y #/fugas (la general, en el panel de fugas: el enlace de las alertas de
+// fuga). Además #/alertas/12, #/usuarios, #/lugares y #/cuenta.
 function leerRuta() {
   const [, vista, nodo] = window.location.hash.replace(/^#\/?/, "/").split("/");
-  if (vista === "sensor") return { vista: "sensor", nodo: nodo || null };
-  if (vista === "usuarios" || vista === "cuenta") return { vista, nodo: null };
+  if (vista === "sensor" || vista === "lugar") return { vista, nodo: nodo || null };
+  if (["usuarios", "cuenta", "lugares"].includes(vista)) return { vista, nodo: null };
   if (vista === "alertas") return { vista, nodo: null, alerta: nodo || null };
-  return { vista: "general", nodo: null, fugas: vista === "fugas" };
+  if (vista === "general" || vista === "fugas") return { vista: "general", nodo: null, fugas: vista === "fugas" };
+  return { vista: "inicio", nodo: null };
 }
 
 // Todo se vuelve a consultar solo, cada pocos segundos (RF-003.2: sin recargar, en ≤ 5 min).
@@ -35,9 +42,12 @@ export default function App({ sesion, onSalir, onActualizar }) {
   const referencias = useConsulta("/api/referencias", 60000);
   const anticipacion = useConsulta("/api/anticipacion", 5000);
   const fugas = useConsulta(`/api/fugas?horas=${HORAS}`, 5000);
-  const red = useConsulta(`/api/red/series?horas=${HORAS}`, 5000);
   const indicadores = useConsulta("/api/alertas/indicadores", 15000);
+  const lugares = useConsulta("/api/lugares", 60000);
   const [ruta, setRuta] = useState(leerRuta);
+  // las series de toda la red y las alertas pendientes, solo en las vistas que las muestran
+  const red = useConsulta(["general", "sensor"].includes(ruta.vista) ? `/api/red/series?horas=${HORAS}` : null, 5000);
+  const pendientes = useConsulta(ruta.vista === "inicio" ? "/api/alertas?estado=pendientes&limite=6" : null, 10000);
   const [ultimoSensor, setUltimoSensor] = useState(null);
 
   useEffect(() => {
@@ -48,6 +58,7 @@ export default function App({ sesion, onSalir, onActualizar }) {
 
   const lista = sensores.datos ?? [];
   const norma = referencias.datos?.norma;
+  const nombres = mapaNombres(lugares.datos?.lugares);
   const abrirSensor = (nodo) => { window.location.hash = `#/sensor/${nodo}`; };
 
   // en la vista por sensor sin sensor elegido: el primero en alarma, el último visto o el primero
@@ -69,7 +80,7 @@ export default function App({ sesion, onSalir, onActualizar }) {
   const [sinServicioDesde, setSinServicioDesde] = useState(null);
   useEffect(() => { setSinServicioDesde(sinServicio ? (d) => d ?? new Date() : null); }, [sinServicio]);
   const admin = sesion.permisos.gestionar_usuarios && sesion.inicio_sesion;
-  const vista = ruta.vista === "usuarios" && !admin ? "general" : ruta.vista;
+  const vista = ["usuarios", "lugares"].includes(ruta.vista) && !admin ? "inicio" : ruta.vista;
   const alertas = norma ? alertasActivas({ estado: estado.datos, sensores: lista, norma,
                                            anticipacion: anticipacion.datos, fugas: fugas.datos }) : [];
   const resumen = resumenRed({ sinServicio, estado: estado.datos, sensores: lista, alertas });
@@ -95,12 +106,12 @@ export default function App({ sesion, onSalir, onActualizar }) {
   );
 
   return (
-    <Estructura vista={vista} sensor={nodo ?? ultimoSensor} sensores={lista} norma={norma}
-                desactualizado={desactualizado} sesion={sesion} onSalir={onSalir}
+    <Estructura vista={vista} sensor={vista === "lugar" ? ruta.nodo : nodo ?? ultimoSensor} sensores={lista} norma={norma}
+                desactualizado={desactualizado} sesion={sesion} onSalir={onSalir} nombres={nombres}
                 sinAtender={indicadores.datos?.nuevas ?? 0} pie={pie}>
       {/* el estado de la red, en las vistas del agua; en Usuarios y Mi cuenta no aporta (la campana avisa) */}
       {["general", "sensor", "alertas"].includes(vista) && (
-        <Encabezado resumen={resumen} hora={estado.datos?.ultima_hora_procesada} />
+        <Encabezado resumen={{ ...resumen, texto: conNombres(resumen.texto, nombres) }} hora={estado.datos?.ultima_hora_procesada} />
       )}
       {sinServicio && (
         <p className="aviso" role="alert">
@@ -111,11 +122,25 @@ export default function App({ sesion, onSalir, onActualizar }) {
         </p>
       )}
 
+      {vista === "inicio" && (lista.length > 0 ? (
+        <Inicio sesion={sesion} estado={estado.datos} sensores={lista} norma={norma} nombres={nombres}
+                anticipacion={anticipacion.datos} fugas={fugas.datos} resumen={resumen} pendientes={pendientes.datos} />
+      ) : !sinServicio && <p className="panel vacio">{resumen.texto}</p>)}
+
       <Suspense fallback={cargando}>
+        {vista === "lugar" && lista.length > 0 && (
+          <Lugar s={lista.find((s) => s.nodo === ruta.nodo)} norma={norma} nombres={nombres} />
+        )}
+        {vista === "lugares" && (
+          <div className="cuerpo-admin">
+            <Lugares orden={ordenRed(lista).map((s) => s.nodo)} onGuardado={lugares.recargar} />
+          </div>
+        )}
         {vista === "usuarios" && <div className="cuerpo-admin"><Usuarios yo={sesion.usuario} /></div>}
         {vista === "alertas" && (
           <div className="cuerpo-admin">
-            <GestionAlertas id={ruta.alerta} sesion={sesion} nodos={lista.map((s) => s.nodo)} indicadores={indicadores} />
+            <GestionAlertas id={ruta.alerta} sesion={sesion} nodos={lista.map((s) => s.nodo)} indicadores={indicadores}
+                            nombres={nombres} sensores={lista} norma={norma} />
           </div>
         )}
         {vista === "cuenta" && (

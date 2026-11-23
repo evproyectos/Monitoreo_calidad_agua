@@ -1,14 +1,18 @@
 import { useEffect, useState } from "react";
 import { pedir, useConsulta } from "../api.js";
 import { fechaHora, horasEntre, TIPOS } from "../formato.js";
+import { conNombres, estadoLugar, explicacion, lugarDeAlerta, nombreDe, parametro, parDeAlerta, pasos } from "../sencillo.js";
+import { Chips, EstadoLugar } from "./Inicio.jsx";
+import Medidor from "./Medidor.jsx";
 import { Icono } from "./Menu.jsx";
 
 // Gestión de alertas (CU-06), con el esquema de las páginas de tickets de Velzon. En #/alertas: los
 // indicadores en tarjetas, el registro en una tabla filtrable por estado, tipo, nodo y fecha, y el F1
 // de las alarmas de los últimos 7 días con lo verificado en campo (RF-004.2, RNF-003) con el registro
-// de los eventos que ocurrieron sin alerta. En #/alertas/<id>: el detalle con lo que hay que saber para
-// actuar; reconocerla, anotar lo que se hizo en campo, cerrarla con su resultado, y su historial.
-// Todos los roles la ven; solo el operador técnico y el administrador la atienden.
+// de los eventos que ocurrieron sin alerta. En #/alertas/<id>: el detalle, primero en palabras (qué
+// pasó, cómo están ahora los lugares y qué hacer, con los nombres de los lugares), luego atenderla
+// (tomarla, anotar lo que se hizo en campo y cerrarla con su resultado), su historial y los datos
+// técnicos. Todos los roles la ven; solo el operador técnico y el administrador la atienden.
 
 const ESTADOS = { nueva: "Nueva", en_atencion: "En atención", cerrada: "Cerrada" };
 const CLASE_ESTADO = { nueva: "nivel-rojo", en_atencion: "nivel-amarillo", cerrada: "nivel-verde" };
@@ -147,15 +151,15 @@ function Indicadores({ datos }) {
   );
 }
 
-function Fila({ a }) {
+function Fila({ a, nombres }) {
   return (
     <tr className={`nivel-${a.nivel}`}>
       <td data-etq="Número"><a href={`#/alertas/${a.id}`} className="id-alerta">#{a.id}</a></td>
       <td data-etq="Alerta" className="col-alerta">
-        <a href={`#/alertas/${a.id}`}>{a.titulo}</a>
+        <a href={`#/alertas/${a.id}`}>{conNombres(a.titulo, nombres)}</a>
         <span>{a.tipo_nombre}</span>
       </td>
-      <td data-etq="Lugar">{a.lugar ?? "Toda la red"}</td>
+      <td data-etq="Lugar">{lugarDeAlerta(a, nombres)}</td>
       <td data-etq="Inicio"><time>{fechaHora(a.inicio)}</time></td>
       <td data-etq="Prioridad"><span className={`pastilla nivel-${a.nivel}`}><i />{NIVEL[a.nivel]}</span></td>
       <td data-etq="Estado">
@@ -174,7 +178,7 @@ function duracion(inicio, fin) {
   return `${d} día${d > 1 ? "s" : ""}${h % 24 ? ` y ${h % 24} h` : ""}`;
 }
 
-function Detalle({ id, yo, puede, onCambio }) {
+function Detalle({ id, yo, puede, onCambio, nombres, sensores, norma }) {
   const consulta = useConsulta(id ? `/api/alertas/${id}` : null, 10000);
   const [nota, setNota] = useState("");
   const [cierre, setCierre] = useState({ resultado: "", observaciones: "" });
@@ -207,13 +211,19 @@ function Detalle({ id, yo, puede, onCambio }) {
   const deOtro = a.estado === "en_atencion" && a.responsable !== (yo.correo ?? "sin_sesion");
 
   const dato = (titulo, valor) => <div><dt>{titulo}</dt><dd>{valor}</dd></div>;
+  // cómo están ahora los lugares de la alerta (lecturas en vivo) y, si es de un parámetro en un solo
+  // lugar, ese valor sobre su barra
+  const afectados = (a.nodos ?? []).map((n) => sensores?.find((s) => s.nodo === n)).filter(Boolean);
+  const par = parDeAlerta(a);
+  const uno = afectados.length === 1 && par && norma ? parametro(afectados[0], par, norma) : null;
+  const queHacer = pasos(a.accion);
   return (
     <div className="detalle-alerta">
       {volver}
       <section className={`panel cabecera-alerta nivel-${a.nivel}`} aria-label="Alerta">
         <span className="cabecera-icono" aria-hidden="true"><Icono nombre="alertas" tam={26} /></span>
         <div>
-          <h2>{a.titulo}</h2>
+          <h2>{conNombres(a.titulo, nombres)}</h2>
           <p className="cabecera-meta">
             <span>#{a.id}</span>
             <span>Desde: <b>{fechaHora(a.inicio)}</b></span>
@@ -226,15 +236,36 @@ function Detalle({ id, yo, puede, onCambio }) {
 
       <div className="detalle-columnas">
         <div className="detalle-principal">
-          <section className="panel" aria-labelledby="que-paso">
+          <section className="panel que-paso" aria-labelledby="que-paso">
             <h3 id="que-paso" className="titulo-tarjeta">Qué pasó</h3>
-            {a.parametros && <p className="parametros"><b>Lecturas:</b> {a.parametros}.</p>}
-            {a.accion && <p className="accion-recomendada"><b>Qué hacer:</b> {a.accion}.</p>}
-            {a.nodos?.length > 0 && a.tipo !== "fuga" && (
-              <p className="nota">Ver el sensor: {a.nodos.map((n, i) => <span key={n}>{i ? ", " : ""}<a href={`#/sensor/${n}`}>{n}</a></span>)}</p>
+            <p className="explicacion">{explicacion(a, nombres)}</p>
+            {a.tipo === "aviso" && a.parametros && <p className="nota">{a.parametros}.</p>}
+            {uno && <Medidor par={par} valor={uno.valor} norma={norma} tono={uno.tono} />}
+            {afectados.length > 0 && abierta && (
+              <div className="afectados">
+                <h4>Cómo están ahora</h4>
+                <ul>
+                  {afectados.map((s) => {
+                    const e = estadoLugar(s, norma);
+                    return (
+                      <li key={s.nodo}>
+                        <EstadoLugar e={e} />
+                        <a className="lugar-nombre" href={`#/lugar/${s.nodo}`}><b>{nombreDe(nombres, s.nodo)}</b></a>
+                        <Chips parametros={e.parametros} />
+                      </li>
+                    );
+                  })}
+                </ul>
+              </div>
             )}
-            {!a.parametros && !a.accion && <p className="vacio">Sin más información sobre esta alerta.</p>}
           </section>
+
+          {queHacer.length > 0 && (
+            <section className="panel" aria-labelledby="que-hacer">
+              <h3 id="que-hacer" className="titulo-tarjeta">Qué hacer</h3>
+              <ol className="pasos">{queHacer.map((x, i) => <li key={i}>{x}</li>)}</ol>
+            </section>
+          )}
 
           {msj?.ok && <p className="mensaje ok" role="status">{msj.ok}</p>}
           {msj?.error && <p className="mensaje error" role="alert">{msj.error}</p>}
@@ -243,10 +274,13 @@ function Detalle({ id, yo, puede, onCambio }) {
             <section className="panel atender" aria-labelledby="atenderla">
               <h3 id="atenderla" className="titulo-tarjeta">Atender la alerta</h3>
               {a.estado === "nueva" && (
-                <button className="boton primario" disabled={ocupado}
-                        onClick={() => hacer("reconocer", undefined, "Quedaste como responsable de esta alerta.")}>
-                  Reconocer y atender
-                </button>
+                <>
+                  <button className="boton primario grande" disabled={ocupado}
+                          onClick={() => hacer("reconocer", undefined, "Quedaste como responsable de esta alerta.")}>
+                    Voy a atenderla
+                  </button>
+                  <p className="nota">Así los demás ven que tú te encargas.</p>
+                </>
               )}
               {deOtro && <p className="mensaje info">La atiende {a.responsable_nombre}. Puedes agregar observaciones.</p>}
 
@@ -317,7 +351,11 @@ function Detalle({ id, yo, puede, onCambio }) {
             <dl className="ficha">
               {dato("Número", `#${a.id}`)}
               {dato("Tipo", `${a.tipo_nombre}${a.evento && EVENTO[a.evento] && a.tipo !== "fuga" ? ` · ${EVENTO[a.evento]}` : ""}`)}
-              {dato("Dónde", a.lugar ?? "Toda la red")}
+              {dato("Dónde", lugarDeAlerta(a, nombres))}
+              {a.parametros && a.tipo !== "aviso" && dato("Lecturas", a.parametros)}
+              {a.nodos?.length > 0 && a.tipo !== "fuga" && dato("Vista detallada", (
+                <span>{a.nodos.map((n, i) => <span key={n}>{i ? ", " : ""}<a href={`#/sensor/${n}`}>{n}</a></span>)}</span>
+              ))}
               {dato("Prioridad", <span className={`pastilla nivel-${a.nivel}`}><i />{NIVEL[a.nivel]}</span>)}
               {dato("Estado", <span className={`pastilla ${CLASE_ESTADO[a.estado]}`}>{a.estado === "cerrada" ? `Cerrada: ${a.resultado_nombre}` : ESTADOS[a.estado]}</span>)}
               {dato("Probabilidad", pct(a.probabilidad))}
@@ -336,7 +374,7 @@ function Detalle({ id, yo, puede, onCambio }) {
   );
 }
 
-export default function GestionAlertas({ id, sesion, nodos, indicadores }) {
+export default function GestionAlertas({ id, sesion, nodos, indicadores, nombres, sensores, norma }) {
   const [f, setF] = useState({ estado: "pendientes", tipo: "", nodo: "", desde: "", hasta: "" });
   const q = new URLSearchParams(Object.entries(f).filter(([, v]) => v)).toString();
   const lista = useConsulta(id ? null : `/api/alertas?${q}`, 10000);
@@ -344,7 +382,8 @@ export default function GestionAlertas({ id, sesion, nodos, indicadores }) {
   const filas = lista.datos ?? [];
   const recargar = () => { lista.recargar(); indicadores.recargar(); };
 
-  if (id) return <Detalle id={id} yo={sesion.usuario} puede={sesion.permisos.atender_alertas} onCambio={recargar} />;
+  if (id) return <Detalle id={id} yo={sesion.usuario} puede={sesion.permisos.atender_alertas} onCambio={recargar}
+                         nombres={nombres} sensores={sensores} norma={norma} />;
   return (
     <div className="gestion">
       <Indicadores datos={indicadores.datos} />
@@ -374,10 +413,10 @@ export default function GestionAlertas({ id, sesion, nodos, indicadores }) {
               <option value="riesgo">Riesgo en 24 h</option>
             </select>
           </label>
-          <label className="campo"><span>Nodo</span>
+          <label className="campo"><span>Lugar</span>
             <select value={f.nodo} onChange={cambiar("nodo")}>
               <option value="">Todos</option>
-              {nodos.map((n) => <option key={n} value={n}>{n}</option>)}
+              {nodos.map((n) => <option key={n} value={n}>{nombreDe(nombres, n) === n ? n : `${nombreDe(nombres, n)} (${n})`}</option>)}
             </select>
           </label>
           <label className="campo"><span>Desde</span><input type="date" value={f.desde} onChange={cambiar("desde")} /></label>
@@ -395,7 +434,7 @@ export default function GestionAlertas({ id, sesion, nodos, indicadores }) {
                 <tr><th scope="col">#</th><th scope="col">Alerta</th><th scope="col">Lugar</th><th scope="col">Inicio</th>
                   <th scope="col">Prioridad</th><th scope="col">Estado</th><th scope="col">Responsable</th></tr>
               </thead>
-              <tbody>{filas.map((a) => <Fila key={a.id} a={a} />)}</tbody>
+              <tbody>{filas.map((a) => <Fila key={a.id} a={a} nombres={nombres} />)}</tbody>
             </table>
           </div>
         )}

@@ -56,6 +56,7 @@ import requests
 
 from calidad_agua import calidad, carga
 from monitoreo import correo
+from monitoreo.lugares import con_nombres
 
 TIPOS = {"contaminacion": "Contaminación", "falla_cloro": "Falla de cloración",
          "turbidez_fuente": "Turbidez en la fuente", "falla_ph": "Falla de pH", "fuga": "Fuga",
@@ -308,11 +309,12 @@ class _Envio:
 # ---------------------------------------------------------------------------- alertas
 class Alertas:
     def __init__(self, canal=None, canales=None, destinatarios=None, registro=None, gestion=None,
-                 rendimiento=None):
+                 rendimiento=None, nombres=None):
         """`destinatarios(nivel)` da los correos de un nivel (Usuarios.destinatarios), `registro(...)`
         anota cada envío (Usuarios.anotar_notificacion), `gestion` (GestionAlertas) guarda cada alerta
-        para atenderla (CU-06): una alerta que ya existía no se vuelve a notificar, y `rendimiento`
-        (Rendimiento) calcula y registra el F1 de cada día."""
+        para atenderla (CU-06): una alerta que ya existía no se vuelve a notificar, `rendimiento`
+        (Rendimiento) calcula y registra el F1 de cada día y `nombres()` da el nombre del lugar de cada
+        sensor (Lugares.nombres): en los mensajes, "J101" sale como "Escuela (J101)"."""
         self.con_riesgo = os.environ.get("ALERTAS_RIESGO", "1") != "0"
         self.con_anticipacion = os.environ.get("ALERTAS_ANTICIPACION", "1") != "0"
         self.hora_resumen = int(os.environ.get("ALERTAS_RESUMEN_HORA", "7"))
@@ -321,6 +323,7 @@ class Alertas:
         self.riesgo = {}                    # (sensor, parámetro) -> horas seguidas en norma (episodio abierto)
         self.gestion = gestion
         self.rendimiento = rendimiento
+        self.nombres = nombres
         self._envios = [_Envio(c, registro) for c in self.canales]
 
     @property
@@ -350,6 +353,14 @@ class Alertas:
                 "canales": {e.canal.nombre: e.estado() for e in self._envios}}
 
     def avisar(self, texto, nivel="rojo", asunto=None, enlace=None):
+        if self.nombres is not None:
+            try:
+                n = self.nombres()
+            except Exception as e:                        # sin base: el mensaje sale con los códigos
+                print(f"No se pudieron leer los nombres de los lugares: {e}", flush=True)
+            else:
+                texto = con_nombres(texto, n)
+                asunto = con_nombres(asunto, n, escapar=False) if asunto else _texto_plano(texto.split("\n")[0])
         for e in self._envios:
             e.cola.put(Aviso(texto, nivel, asunto, enlace=enlace))   # uno por canal: cada uno con sus pendientes
 

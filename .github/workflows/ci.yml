@@ -33,6 +33,10 @@ jobs:
           pip install "calidad-agua[red] @ git+$MODELOS@$REF"
       - name: Estilo (flake8)
         run: flake8
+      - name: Vulnerabilidades conocidas en las dependencias
+        run: |
+          pip install pip-audit
+          pip-audit -r requirements.txt
       - name: Pruebas y cobertura (mínimo 70 %)
         run: pytest --cov --cov-report=term-missing --cov-fail-under=70
       - name: Resumen de cobertura

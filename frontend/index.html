@@ -17,7 +17,7 @@
       // respuestas una sola vez y solo en los primeros segundos; si no hay sesión, las descarta.
       window.__precarga = { t: Date.now(), r: {} };
       ["/api/sesion", "/api/estado", "/api/sensores", "/api/referencias", "/api/alarmas", "/api/anticipacion",
-       "/api/fugas?horas=168"].forEach(function (ruta) {
+       "/api/fugas?horas=168", "/api/lugares", "/api/alertas?estado=pendientes&limite=6"].forEach(function (ruta) {
         window.__precarga.r[ruta] = fetch(ruta, { credentials: "same-origin" }).then(function (r) {
           return r.json().catch(function () { return null; }).then(function (d) { return { ok: r.ok, status: r.status, d: d }; });
         });

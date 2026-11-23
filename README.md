@@ -52,9 +52,15 @@ backend/
 frontend/              dashboard en React (Vite + Recharts)
   src/
     Sesion.jsx         inicio de sesión, contraseña temporal y después el dashboard
-    App.jsx            páginas: #/general, #/sensor/J224, #/alertas/12, #/usuarios (administrador) y #/cuenta
+    App.jsx            páginas: vista sencilla #/inicio (la portada) y #/lugar/J224; vista detallada
+                       #/general y #/sensor/J224; #/alertas/12, #/cuenta y, para el administrador,
+                       #/usuarios y #/lugares
     estado.js          semáforo y alertas activas ordenadas por severidad y antelación
-    componentes/       Estructura (barra de arriba, título, pie), Menu (menú de la izquierda), Encabezado, Tarjetas, Curva, AlertasActivas, VistaGeneral, Anticipacion, Fugas,
+    sencillo.js        lo mismo en palabras para la vista sencilla ("Bien", "Revisar", "el cloro está
+                       bajo") y los nombres de los lugares en lugar de los códigos
+    componentes/       Estructura (barra de arriba, título, pie y la barra de abajo en el teléfono),
+                       Menu (menú de la izquierda), Inicio, Lugar, Lugares, Medidor, Encabezado,
+                       Tarjetas, Curva, AlertasActivas, VistaGeneral, Anticipacion, Fugas,
                        GraficoRed (y serieRed.js), MapaCalor, DetalleSensor, Graficos, Alarmas,
                        InicioSesion, Cuenta, Usuarios, CorreoAlertas, GestionAlertas
     api.js             consultas periódicas al backend y aviso cuando vence la sesión
@@ -248,19 +254,21 @@ npm run lcp
 
 | Página | Antes | Ahora (mediana · máximo) | Transferido antes → ahora |
 |---|---|---|---|
-| Inicio de sesión | 5,9 s | 2,0 s · 2,0 s | 784 KB → 136 KB |
-| Vista general | 6,7 s | 2,0 s · 2,0 s | 1036 KB → 303 KB |
-| Detalle de un sensor | 6,6 s | 2,1 s · 2,1 s | 1132 KB → 318 KB |
+| Inicio de sesión | 5,9 s | 2,0 s · 2,1 s | 784 KB → 150 KB |
+| Inicio (vista sencilla, la portada) | — | 2,1 s · 2,2 s | 179 KB |
+| Vista detallada (toda la red) | 6,7 s | 2,0 s · 2,1 s | 1036 KB → 332 KB |
+| Detalle de un sensor | 6,6 s | 2,1 s · 2,2 s | 1132 KB → 344 KB |
 
-(21/11/2026, servicio local con 10 días del periodo de prueba, pantalla de 1366 × 768; en teléfono,
-entre 2,0 y 2,1 s.) Lo que cambió:
+(22/11/2026, servicio local con 10 días del periodo de prueba, pantalla de 1366 × 768; en teléfono,
+entre 2,0 y 2,2 s.) Lo que cambió:
 
 - **Compresión**: el servicio manda el dashboard y las respuestas JSON con gzip (`GZipMiddleware`);
   el JavaScript inicial pasó de 678 KB a 81 KB transferidos. Los archivos de `assets/` llevan un hash
   en el nombre y se guardan en el navegador por un año; `index.html`, nunca.
-- **Lo primero, primero**: la pantalla de inicio de sesión y la vista general vienen en el archivo
-  inicial; los gráficos (Recharts, unos 115 KB), el detalle de un sensor, Usuarios, Alertas y Mi
-  cuenta se cargan cuando hacen falta, y mientras tanto queda su espacio para que la página no salte.
+- **Lo primero, primero**: la pantalla de inicio de sesión, el inicio y la vista detallada vienen en
+  el archivo inicial; los gráficos (Recharts, unos 115 KB), un lugar, el detalle de un sensor,
+  Usuarios, Lugares, Alertas y Mi cuenta se cargan cuando hacen falta, y mientras tanto queda su
+  espacio para que la página no salte. Las series de toda la red solo se piden en la vista detallada.
 - **Los datos no esperan al JavaScript**: `index.html` pide la sesión y los datos de la primera
   pantalla mientras baja el JavaScript (`api.js` usa esas respuestas una sola vez y en los primeros
   15 s; sin sesión las descarta).
@@ -488,6 +496,34 @@ El certificado de prueba es autofirmado: el navegador avisa que no lo reconoce h
 marca como confiable (el comando dice cómo). Para un servidor real se usa un certificado de una
 autoridad reconocida, que se configurará con Docker.
 
+### Vista sencilla y nombres de los lugares
+
+Al entrar se ve la **vista sencilla**, pensada para la Junta y para los operadores en el campo. No
+tiene gráficos ni probabilidades: responde si el agua está bien, dónde hay un problema y qué hay que
+hacer.
+
+- **Inicio** (`#/inicio`): un veredicto grande ("El agua está bien", "Hay un problema en la
+  Escuela"), lo que se espera en las próximas 24 horas, las fugas, lo que hay que atender y los
+  lugares con su estado en palabras (Bien, Vigilar, Aviso, Revisar) y el de su cloro, claridad y pH.
+- **Un lugar** (`#/lugar/J101`): cloro, claridad y pH, cada uno sobre una barra con su zona normal,
+  y el cloro de la última semana.
+- **Una alerta** (`#/alertas/12`): primero en palabras qué pasó, cómo están ahora los lugares y los
+  pasos de "qué hacer"; después atenderla, el historial y los datos técnicos.
+- La **vista detallada** (`#/general`, `#/sensor/J101`) es la de siempre, a un clic desde el menú.
+- En el teléfono hay una barra abajo con Inicio, Alertas y Más.
+
+Las palabras salen de la misma norma y los mismos datos que el semáforo (`sencillo.js` usa
+`estado.js`). Un punto que casi siempre está fuera de la norma (el cloro bajo al final de la red)
+sale como **Aviso** en amarillo, no como Revisar: es algo conocido.
+
+**Nombres de los lugares.** Cada sensor tiene un código de la red (J101) que no dice nada a quien
+vive en la comunidad. En **Lugares** el administrador le pone a cada uno el nombre con el que la
+gente lo conoce ("Escuela") y una zona o referencia ("Centro"). Esos nombres salen en la vista
+sencilla, en las alertas del tablero y en los correos y mensajes de Telegram ("Escuela (J101)").
+Mientras no se cambien, se usan unos nombres de ejemplo (`EJEMPLOS` en `backend/monitoreo/lugares.py`).
+Se guardan en la tabla `lugares` de la base de usuarios. Las alertas siguen guardando los códigos,
+así un cambio de nombre vale también para las de antes.
+
 ### Inicio de sesión y roles
 
 El dashboard pide correo y contraseña (CU-00). Cada usuario tiene un rol:
@@ -595,6 +631,7 @@ base. Se ajusta con `RENDIMIENTO_DIAS` (7), `RENDIMIENTO_F1_MINIMO` (0,75) y
 | `GET /api/anticipacion` | probabilidad de que empiece cada tipo de evento en las próximas 24 h, con su umbral, y los avisos anticipados (`disponible: false` si no hay modelo de anticipación) |
 | `GET /api/fugas?horas=168` | probabilidad de fuga por hora, estado actual con el tramo y el caudal de más, y las alarmas de fuga (`disponible: false` si no hay modelo de fugas) |
 | `GET /api/referencias` | norma, tolerancias de la meta y umbral del detector |
+| `GET /api/lugares`, `PUT /api/lugares` | nombre y zona de cada punto de medición (cambiarlos: solo el administrador) |
 
 ### Resiliencia (RNF-002)
 

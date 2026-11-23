@@ -24,8 +24,8 @@ const MOVIL = Boolean(process.env.MOVIL);
 const META_MS = 2500;
 const FAST_3G = { offline: false, latency: 562.5, downloadThroughput: (1.6 * 1024 * 1024 / 8) * 0.9,
                   uploadThroughput: (750 * 1024 / 8) * 0.9 };
-const PAGINAS = [["", false, "Inicio de sesión"], ["#/general", true, "Vista general"],
-                 ["#/sensor/J224", true, "Detalle de un sensor"]];
+const PAGINAS = [["", false, "Inicio de sesión"], ["#/inicio", true, "Inicio (vista sencilla)"],
+                 ["#/general", true, "Vista detallada"], ["#/sensor/J224", true, "Detalle de un sensor"]];
 
 async function medir(navegador, ruta, conSesion) {
   const ctx = await navegador.newContext({
